@@ -48,7 +48,6 @@ import 'package:sendbird_chat_sdk/src/public/core/message/file_message.dart';
 import 'package:sendbird_chat_sdk/src/public/core/message/root_message.dart';
 import 'package:sendbird_chat_sdk/src/public/core/message/user_message.dart';
 import 'package:sendbird_chat_sdk/src/public/core/user/sender.dart';
-import 'package:sendbird_chat_sdk/src/public/main/chat/sendbird_chat.dart';
 import 'package:sendbird_chat_sdk/src/public/main/collection/collection_event_source.dart';
 import 'package:sendbird_chat_sdk/src/public/main/define/enums.dart';
 import 'package:sendbird_chat_sdk/src/public/main/define/exceptions.dart';

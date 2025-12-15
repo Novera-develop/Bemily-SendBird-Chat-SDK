@@ -17,7 +17,7 @@ class ParticipantListQuery extends BaseQuery {
   ParticipantListQuery({
     required this.channelUrl,
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// Gets the list of next items.
   @override

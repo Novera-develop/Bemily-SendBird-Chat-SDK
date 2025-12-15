@@ -66,7 +66,7 @@ class Member extends User {
 
   factory Member.fromJson(Map<String, dynamic> json) {
     final member = _$MemberFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
     member.restrictionInfo = RestrictionInfo.fromJson(json);
     return member;
   }

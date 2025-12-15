@@ -19,7 +19,8 @@ class SendbirdStatistics {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'type: $type');
-    return await (chat ?? SendbirdChat().chat)
+    // Use provided chat or fall back to default instance
+    return await (chat ?? SendbirdChat.instance.chat)
         .statManager
         .appendStat(type: type, data: data);
   }

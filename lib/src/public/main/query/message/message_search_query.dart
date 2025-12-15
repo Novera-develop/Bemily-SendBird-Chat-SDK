@@ -66,7 +66,7 @@ class MessageSearchQuery extends BaseQuery {
   MessageSearchQuery({
     required this.keyword,
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// Gets the list of next items.
   /// @since 4.0.13

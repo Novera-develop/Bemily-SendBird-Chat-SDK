@@ -137,7 +137,7 @@ abstract class BaseMessageCollection {
       final ms = remainingDuration + 1000; // Referred by JS SDK
       unmuteTimer = Timer(Duration(milliseconds: ms), () {
         runZonedGuarded(() async {
-          if (SendbirdChat.currentUser != null) {
+          if (chat.currentUser != null) {
             final myMuteInfo = await _channel.getMyMuteInfo();
             if (!myMuteInfo.isMuted) {
               // My mute info has been already unmuted in server.
@@ -164,7 +164,7 @@ abstract class BaseMessageCollection {
     if (_channel is GroupChannel) {
       final channel = _channel as GroupChannel;
       final myMember = channel.members.firstWhereOrNull(
-          (member) => member.userId == SendbirdChat.currentUser?.userId);
+          (member) => member.userId == chat.currentUser?.userId);
 
       if (myMember != null && myMember.isMuted != isMuted) {
         channel.myMutedState = isMuted ? MuteState.muted : MuteState.unmuted;

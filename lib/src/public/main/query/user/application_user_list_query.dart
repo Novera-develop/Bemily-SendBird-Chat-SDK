@@ -37,7 +37,7 @@ class ApplicationUserListQuery extends BaseQuery {
     this.metaDataValuesFilter,
     this.nicknameStartsWithFilter,
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// Gets the list of next items.
   @override

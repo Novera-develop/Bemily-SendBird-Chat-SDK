@@ -311,7 +311,7 @@ class BaseMessage extends RootMessage {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'params.messageId: ${params.messageId}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     if (params.messageId <= 0) throw InvalidParameterException();
 
@@ -386,7 +386,7 @@ class BaseMessage extends RootMessage {
   }) async {
     sbLog.i(StackTrace.current,
         'params.scheduledMessageId: ${params.scheduledMessageId}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     return await chat.apiClient.send<BaseMessage>(
       GroupChannelScheduledMessageGetRequest(chat, params: params),

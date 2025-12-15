@@ -19,7 +19,7 @@ class ScheduledMessageListQuery extends BaseQuery {
   ScheduledMessageListQuery({
     this.params,
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat) {
+  }) : super(chat: chat ?? SendbirdChat.instance.chat) {
     if (params?.limit != null) limit = params!.limit!;
   }
 

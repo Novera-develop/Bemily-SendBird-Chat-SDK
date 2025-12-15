@@ -245,13 +245,13 @@ class Chat with WidgetsBindingObserver {
             results.contains(ConnectivityResult.vpn) ||
             results.contains(ConnectivityResult.other)) {
           if (chatContext.isChatConnected) {
-            if (SendbirdChat.currentUser != null ||
+            if (currentUser != null ||
                 chatContext.currentUserId != null) {
               sbLog.d(StackTrace.current, 'reconnect()');
               await connectionManager.reconnect(reset: true);
             }
           } else if (chatContext.isFeedAuthenticated) {
-            if (SendbirdChat.currentUser != null) {
+            if (currentUser != null) {
               sbLog.d(StackTrace.current, 'refreshNotificationCollections()');
               collectionManager.refreshNotificationCollections();
             }
@@ -288,6 +288,8 @@ class Chat with WidgetsBindingObserver {
     sbLog.i(StackTrace.current);
     return chatContext.options;
   }
+
+  int get maxInt => kIsWeb ? 9007199254740991 : double.maxFinite.toInt();
 
   void setAppVersion(String version) {
     sbLog.i(StackTrace.current, 'version: $version');

@@ -150,7 +150,7 @@ class User {
       json['connection_status'] = isOnline ? 'online' : 'offline';
     }
     return _$UserFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   factory User.fromJsonWithChat(Chat chat, Map<String, dynamic> json) {

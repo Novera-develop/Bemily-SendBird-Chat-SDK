@@ -122,7 +122,7 @@ class GroupChannelListQuery extends BaseQuery {
 
   GroupChannelListQuery({
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// [User] IDs exact filter.[GroupChannel] list containing only and exactly the passed [User] IDs will be returned.
   /// This does not cooperate with other filters.

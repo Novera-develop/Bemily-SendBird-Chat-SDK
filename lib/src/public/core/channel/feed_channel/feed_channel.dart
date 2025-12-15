@@ -115,8 +115,8 @@ class FeedChannel extends BaseChannel {
   }
 
   factory FeedChannel.fromJson(Map<String, dynamic> json) {
-    return _fromJson(SendbirdChat().chat, json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+    return _fromJson(SendbirdChat.instance.chat, json)
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   @override
@@ -167,7 +167,7 @@ class FeedChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel = chat.channelCache.find<FeedChannel>(channelKey: channelUrl);
     if (channel != null && !channel.dirty) {
@@ -203,7 +203,7 @@ class FeedChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel = await chat.apiClient.send<FeedChannel>(
       FeedChannelRefreshRequest(
@@ -315,6 +315,7 @@ class FeedChannel extends BaseChannel {
         if (!await SendbirdStatistics.appendStat(
           type: SendbirdStatistics.notiStatsType,
           data: data,
+          chat: chat,
         )) {
           result = false;
         }
@@ -350,6 +351,7 @@ class FeedChannel extends BaseChannel {
         if (!await SendbirdStatistics.appendStat(
           type: SendbirdStatistics.notiStatsType,
           data: data,
+          chat: chat,
         )) {
           result = false;
         }
@@ -385,6 +387,7 @@ class FeedChannel extends BaseChannel {
         if (!await SendbirdStatistics.appendStat(
           type: SendbirdStatistics.notiStatsType,
           data: data,
+          chat: chat,
         )) {
           result = false;
         }

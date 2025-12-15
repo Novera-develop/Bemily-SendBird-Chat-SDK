@@ -73,7 +73,7 @@ class AdminMessage extends BaseMessage {
 
   factory AdminMessage.fromJson(Map<String, dynamic> json) {
     return _$AdminMessageFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   factory AdminMessage.fromJsonWithChat(Chat chat, Map<String, dynamic> json) {

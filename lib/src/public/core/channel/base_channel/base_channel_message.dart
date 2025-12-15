@@ -788,7 +788,7 @@ extension BaseChannelMessage on BaseChannel {
         channelUrl: channelUrl,
         params: params,
         token: token,
-        timestamp: timestamp ?? SendbirdChat.maxInt,
+        timestamp: timestamp ?? chat.maxInt,
       ),
     );
   }

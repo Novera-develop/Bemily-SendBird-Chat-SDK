@@ -57,7 +57,7 @@ class PollOption {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'params.pollId: ${params.pollId}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     return await chat.apiClient.send(PollOptionGetRequest(
       chat,

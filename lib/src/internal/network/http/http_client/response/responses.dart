@@ -238,7 +238,7 @@ class FeedChannelConverter<T> implements JsonConverter<FeedChannel, Object> {
   FeedChannel fromJson(Object json) {
     if (json is Map<String, dynamic>) {
       return FeedChannel.fromJson(json)
-        ..set(SendbirdChat().chat); // Set the singleton chat;
+        ..set(SendbirdChat.instance.chat); // Set the singleton chat;
     }
     return json as FeedChannel;
   }

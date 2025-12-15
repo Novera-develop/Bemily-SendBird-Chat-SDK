@@ -116,7 +116,7 @@ class MessageRetentionManager {
         channelType: ChannelType.group,
         channelUrl: channel.channelUrl,
         sendingStatus: SendingStatus.succeeded,
-        timestamp: SendbirdChat.maxInt,
+        timestamp: chat.maxInt,
         params: MessageListParams(),
         isPrevious: true,
       );

@@ -17,7 +17,7 @@ class BlockedUserListQuery extends BaseQuery {
   BlockedUserListQuery({
     this.userIdsFilter = const [],
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// Gets the list of next items.
   @override

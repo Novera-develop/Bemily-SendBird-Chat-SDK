@@ -26,7 +26,7 @@ class FeedChannelListQuery extends BaseQuery {
 
   FeedChannelListQuery({
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// Gets the list of [FeedChannel]s. The queried result is passed to `handler` as list.
   /// If this method is repeatedly called after each [next] is finished,

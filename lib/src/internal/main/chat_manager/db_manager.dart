@@ -910,7 +910,7 @@ class DBManager {
       event: isCacheHit ? LocalCacheEvent.cacheHit : LocalCacheEvent.cacheMiss,
       maxDbSize: _maxDBFileSize,
       messageInitPolicy: 'cache_and_replace_by_api',
-      useLocalCache: SendbirdChat.getOptions().useCollectionCaching,
+      useLocalCache: _chat.getOptions().useCollectionCaching,
       collectionId: collection.collectionId,
     );
 
@@ -953,6 +953,7 @@ class DBManager {
     SendbirdStatistics.appendStat(
       type: SendbirdStatistics.featureLocalCacheEventType,
       data: data,
+      chat: _chat,
     );
   }
 
@@ -981,6 +982,7 @@ class DBManager {
     SendbirdStatistics.appendStat(
       type: SendbirdStatistics.featureLocalCacheType,
       data: data,
+      chat: _chat,
     );
   }
 }

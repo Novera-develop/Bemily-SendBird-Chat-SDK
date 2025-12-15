@@ -35,8 +35,8 @@ class MessageCollection extends BaseMessageCollection {
           channel: channel,
           params: params,
           handler: handler,
-          startingPoint: startingPoint ?? SendbirdChat.maxInt,
-          chat: chat ?? SendbirdChat().chat,
+          startingPoint: startingPoint ?? (chat ?? SendbirdChat.instance.chat).maxInt,
+          chat: chat ?? SendbirdChat.instance.chat,
         ) {
     sbLog.i(StackTrace.current, 'MessageCollection()');
 
@@ -89,7 +89,7 @@ class MessageCollection extends BaseMessageCollection {
     sbLog.i(StackTrace.current);
 
     runZonedGuarded(() async {
-      if (SendbirdChat.currentUser != null) {
+      if (chat.currentUser != null) {
         GroupChannel.refresh(channel.channelUrl).then((channel) async {
           baseChannel = channel; // Check
 
@@ -101,7 +101,7 @@ class MessageCollection extends BaseMessageCollection {
           }
 
           final myMember = channel.members.firstWhereOrNull(
-              (member) => member.userId == SendbirdChat.currentUser?.userId);
+              (member) => member.userId == chat.currentUser?.userId);
 
           if (myMember != null && myMember.isMuted) {
             final myMuteInfo = await channel.getMyMuteInfo();

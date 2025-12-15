@@ -133,7 +133,7 @@ class FileMessage extends BaseMessage {
     }
 
     FileMessage fileMessage = _$FileMessageFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
 
     if (fileMessage.thumbnails != null && fileMessage.thumbnails!.isNotEmpty) {
       for (final thumbnail in fileMessage.thumbnails!) {

@@ -57,13 +57,15 @@ class PreviousMessageListQuery extends BaseQuery {
 
   /// The time of a request.
   /// After each call of [next], this value will change to the oldest [BaseMessage.createdAt] value of the message that have been fetched.
-  int? messageTimestamp = SendbirdChat.maxInt;
+  int? messageTimestamp;
 
   PreviousMessageListQuery({
     required this.channelType,
     required this.channelUrl,
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat) {
+    messageTimestamp = this.chat.maxInt;
+  }
 
   /// Gets the list of next items.
   @override

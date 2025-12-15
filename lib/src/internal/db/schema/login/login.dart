@@ -28,5 +28,5 @@ class Login {
     Chat? chat,
   })  : services = services ?? [],
         uploadSizeLimit = uploadSizeLimit ?? 0,
-        chat = chat ?? SendbirdChat().chat;
+        chat = chat ?? SendbirdChat.instance.chat;
 }

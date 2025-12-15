@@ -77,7 +77,7 @@ class PublicGroupChannelListQuery extends BaseQuery {
 
   PublicGroupChannelListQuery({
     Chat? chat,
-  }) : super(chat: chat ?? SendbirdChat().chat);
+  }) : super(chat: chat ?? SendbirdChat.instance.chat);
 
   /// setMetaDataFilterWithValues
   void setMetaDataFilterWithValues(String key, List<String> values) {

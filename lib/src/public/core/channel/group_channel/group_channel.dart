@@ -274,7 +274,7 @@ class GroupChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     GroupChannel? channel =
         chat.channelCache.find<GroupChannel>(channelKey: channelUrl);
@@ -307,7 +307,7 @@ class GroupChannel extends BaseChannel {
     String channelUrl, {
     Chat? chat,
   }) async {
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel =
         chat.channelCache.find<GroupChannel>(channelKey: channelUrl);
@@ -338,7 +338,7 @@ class GroupChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel = await chat.apiClient.send<GroupChannel>(
       GroupChannelRefreshRequest(
@@ -370,7 +370,7 @@ class GroupChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'params.userIds: ${params.userIds}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final currentUserId = chat.chatContext.currentUserId ?? '';
     if (params.userIds?.isEmpty ?? true) {
@@ -415,7 +415,7 @@ class GroupChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current);
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final ts = await chat.apiClient.send<int?>(
       GroupChannelMessageDeletionTimestampGetRequest(
@@ -472,7 +472,7 @@ class GroupChannel extends BaseChannel {
 
   factory GroupChannel.fromJson(Map<String, dynamic> json) {
     final channel = _$GroupChannelFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
 
     if (channel.messageDeletionTimestamp != null) {
       MessageRetentionManager().syncGroupChannelMessages(

@@ -66,7 +66,7 @@ class Sender extends User {
     if (json['name'] != null) json['nickname'] = json['name'];
     if (json['image'] != null) json['profile_url'] = json['image'];
     return _$SenderFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   factory Sender.fromJsonWithChat(Chat chat, Map<String, dynamic> json) {

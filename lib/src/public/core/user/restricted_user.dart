@@ -43,7 +43,7 @@ class RestrictedUser extends User {
 
   factory RestrictedUser.fromJson(Map<String, dynamic> json) {
     final user = _$RestrictedUserFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
     user._restrictionInfo = RestrictionInfo.fromJson(json);
     return user;
   }

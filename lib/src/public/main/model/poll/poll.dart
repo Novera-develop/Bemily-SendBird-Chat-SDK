@@ -84,7 +84,7 @@ class Poll {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'params.title: ${params.title}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     return await chat.apiClient.send(PollCreateRequest(chat, params: params));
   }
@@ -95,7 +95,7 @@ class Poll {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'params.pollId: ${params.pollId}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     return await chat.apiClient.send(PollGetRequest(
       chat,

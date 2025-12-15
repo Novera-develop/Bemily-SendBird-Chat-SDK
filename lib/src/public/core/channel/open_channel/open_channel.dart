@@ -61,7 +61,7 @@ class OpenChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel = chat.channelCache.find<OpenChannel>(channelKey: channelUrl);
     if (channel != null && !channel.dirty) {
@@ -78,7 +78,7 @@ class OpenChannel extends BaseChannel {
     Chat? chat,
   }) async {
     sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     final channel = await chat.apiClient.send<OpenChannel>(
       OpenChannelRefreshRequest(
@@ -99,7 +99,7 @@ class OpenChannel extends BaseChannel {
   }) async {
     sbLog.i(StackTrace.current,
         'params.operatorUserIds: ${params.operatorUserIds}');
-    chat ??= SendbirdChat().chat;
+    chat ??= SendbirdChat.instance.chat;
 
     return await chat.apiClient.send<OpenChannel>(OpenChannelCreateRequest(
         chat, params,
@@ -136,7 +136,7 @@ class OpenChannel extends BaseChannel {
 
   factory OpenChannel.fromJson(Map<String, dynamic> json) {
     return _$OpenChannelFromJson(json)
-      ..set(SendbirdChat().chat); // Set the singleton chat
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   factory OpenChannel.fromJsonWithChat(Chat chat, Map<String, dynamic> json) {

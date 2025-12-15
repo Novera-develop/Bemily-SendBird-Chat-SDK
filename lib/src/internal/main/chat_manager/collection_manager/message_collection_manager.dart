@@ -346,7 +346,7 @@ extension MessageCollectionManager on CollectionManager {
         prevEndTs: prevEndTs,
         prevCacheCount: prevCacheCount,
         nextStartTs: nextStartTs,
-        nextEndTs: messageCollection.hasNext ? nextEndTs : SendbirdChat.maxInt,
+        nextEndTs: messageCollection.hasNext ? nextEndTs : _chat.maxInt,
         nextCacheCount: nextCacheCount,
         checkingContinuousMessages: _chat.dbManager.isEnabled(), // [DBManager]
       ),
