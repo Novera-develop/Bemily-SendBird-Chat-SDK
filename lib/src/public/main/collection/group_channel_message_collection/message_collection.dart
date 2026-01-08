@@ -35,7 +35,8 @@ class MessageCollection extends BaseMessageCollection {
           channel: channel,
           params: params,
           handler: handler,
-          startingPoint: startingPoint ?? (chat ?? SendbirdChat.instance.chat).maxInt,
+          startingPoint:
+              startingPoint ?? (chat ?? SendbirdChat.instance.chat).maxInt,
           chat: chat ?? SendbirdChat.instance.chat,
         ) {
     sbLog.i(StackTrace.current, 'MessageCollection()');

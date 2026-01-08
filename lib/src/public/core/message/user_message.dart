@@ -105,7 +105,8 @@ class UserMessage extends BaseMessage {
     if (json['scheduled_message_id'] != null) {
       userMessage.scheduledInfo = ScheduledInfo.fromJson(json);
     }
-    return userMessage..set(SendbirdChat.instance.chat); // Set the singleton chat
+    return userMessage
+      ..set(SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   factory UserMessage.fromJsonWithChat(Chat chat, Map<String, dynamic> json) {

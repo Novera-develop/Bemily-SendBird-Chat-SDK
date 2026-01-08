@@ -50,7 +50,8 @@ class NotificationMessage extends RootMessage {
   });
 
   factory NotificationMessage.fromJson(Map<String, dynamic> json) {
-    return NotificationMessage.fromJsonWithChat(SendbirdChat.instance.chat, json);
+    return NotificationMessage.fromJsonWithChat(
+        SendbirdChat.instance.chat, json);
   }
 
   factory NotificationMessage.fromJsonWithChat(
@@ -83,7 +84,8 @@ class NotificationMessage extends RootMessage {
         }
       }
     }
-    return message..set(chat ?? SendbirdChat.instance.chat); // Set the singleton chat
+    return message
+      ..set(chat ?? SendbirdChat.instance.chat); // Set the singleton chat
   }
 
   @override

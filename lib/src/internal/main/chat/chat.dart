@@ -66,7 +66,7 @@ part 'chat_notifications.dart';
 part 'chat_push.dart';
 part 'chat_user.dart';
 
-const sdkVersion = '4.7.0';
+const sdkVersion = '4.8.0';
 
 // Internal implementation for main class. Do not directly access this class.
 class Chat with WidgetsBindingObserver {
@@ -245,8 +245,7 @@ class Chat with WidgetsBindingObserver {
             results.contains(ConnectivityResult.vpn) ||
             results.contains(ConnectivityResult.other)) {
           if (chatContext.isChatConnected) {
-            if (currentUser != null ||
-                chatContext.currentUserId != null) {
+            if (currentUser != null || chatContext.currentUserId != null) {
               sbLog.d(StackTrace.current, 'reconnect()');
               await connectionManager.reconnect(reset: true);
             }
