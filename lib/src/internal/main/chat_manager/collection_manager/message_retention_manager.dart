@@ -16,15 +16,20 @@ class MessageRetentionManager {
 
   factory MessageRetentionManager() => _instance;
 
-  final String _configTsKey = 'com.sendbird.chat.config_ts';
+  final String _configTsKeyPrefix = 'com.sendbird.chat.config_ts';
   int? applicationSettingsLimit;
   int latestPaginationCount = 0;
+
+  /// Get config_ts key for specific appId to support multi-instance
+  String _getConfigTsKey(String appId) {
+    return '${_configTsKeyPrefix}_$appId';
+  }
 
   void checkApplicationSettings(Chat chat) async {
     sbLog.i(StackTrace.current, 'Started');
 
     try {
-      int? lastConfigTs = await getConfigTs();
+      int? lastConfigTs = await getConfigTs(chat.chatContext.appId);
       String? token;
       ApplicationSettings settings;
 
@@ -81,7 +86,7 @@ class MessageRetentionManager {
       } while (settings.hasMore);
 
       if (settings.ts != null) {
-        setConfigTs(settings.ts!);
+        setConfigTs(chat.chatContext.appId, settings.ts!);
       }
     } catch (e) {
       sbLog.e(StackTrace.current, e.toString());
@@ -154,18 +159,18 @@ class MessageRetentionManager {
     return settings;
   }
 
-  Future<bool> setConfigTs(int configTs) async {
+  Future<bool> setConfigTs(String appId, int configTs) async {
     final prefs = await SharedPreferences.getInstance();
-    return await prefs.setInt(_configTsKey, configTs);
+    return await prefs.setInt(_getConfigTsKey(appId), configTs);
   }
 
-  Future<int?> getConfigTs() async {
+  Future<int?> getConfigTs(String appId) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_configTsKey);
+    return prefs.getInt(_getConfigTsKey(appId));
   }
 
-  Future<void> clearConfigTs() async {
+  Future<void> clearConfigTs(String appId) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_configTsKey);
+    await prefs.remove(_getConfigTsKey(appId));
   }
 }

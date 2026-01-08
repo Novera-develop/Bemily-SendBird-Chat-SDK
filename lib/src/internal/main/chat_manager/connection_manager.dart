@@ -22,6 +22,8 @@ import 'package:sendbird_chat_sdk/src/public/main/define/sendbird_error.dart';
 import 'package:universal_io/io.dart';
 import 'package:uuid/uuid.dart';
 
+import 'collection_manager/auto_resend_manager.dart';
+
 class ConnectionManager {
   Timer? reconnectTimer;
 
@@ -349,7 +351,8 @@ class ConnectionManager {
         //- [DBManager]
 
         await chat.deviceTokenManager.cleanUp();
-        await MessageRetentionManager().clearConfigTs();
+        await MessageRetentionManager().clearConfigTs(chat.chatContext.appId);
+        AutoResendManager().cleanUp(chat.chatId);
       }
     } else {
       await chat.eventDispatcher.onDisconnected();
@@ -669,7 +672,7 @@ class ConnectionManager {
     final appId = chat.chatContext.appId;
     final appVersion = chat.chatContext.appVersion;
 
-    int configTs = await MessageRetentionManager().getConfigTs() ?? 0;
+    int configTs = await MessageRetentionManager().getConfigTs(appId) ?? 0;
     String? uikitVersion = chat.extensions[Chat.extensionKeyUiKit];
 
     return {

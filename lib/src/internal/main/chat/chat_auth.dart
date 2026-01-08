@@ -37,7 +37,8 @@ extension ChatAuth on Chat {
     await eventDispatcher.onConnecting(); // Check
 
     try {
-      int configTs = await MessageRetentionManager().getConfigTs() ?? 0;
+      int configTs =
+          await MessageRetentionManager().getConfigTs(chatContext.appId) ?? 0;
 
       return await apiClient.send<User>(AuthenticateFeedRequest(
         this,

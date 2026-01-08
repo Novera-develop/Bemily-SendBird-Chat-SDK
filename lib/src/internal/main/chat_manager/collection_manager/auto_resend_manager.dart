@@ -14,23 +14,28 @@ class AutoResendManager {
   factory AutoResendManager() => _instance;
 
   static const int _delayForRateLimit = 200; // Check
-  bool _isAutoResending = false;
-  bool _stopAutoResending = false;
+  // bool _isAutoResending = false;
+  // bool _stopAutoResending = false;
+  final Map<int, bool> _isAutoResendingMap = {};
+  final Map<int, bool> _stopAutoResendingMap = {};
 
   void startAutoResend(Chat chat) async {
+    final chatId = chat.chatId;
+
     if (!chat.chatContext.options.useAutoResend) {
       sbLog.i(StackTrace.current, 'Returned because of useAutoResend == false');
       return;
     }
 
-    if (_isAutoResending) {
-      sbLog.i(
-          StackTrace.current, 'Returned because of _isAutoResending == true');
+    if (_isAutoResendingMap[chatId] == true) {
+      sbLog.i(StackTrace.current,
+          'Returned because of _isAutoResending == true (chatId: $chatId)');
       return;
     }
 
-    sbLog.i(StackTrace.current, 'Started');
-    _isAutoResending = true;
+    sbLog.i(StackTrace.current, 'Started (chatId: $chatId)');
+    _isAutoResendingMap[chatId] = true;
+    _stopAutoResendingMap[chatId] = false;
 
     try {
       for (final collection in chat.collectionManager.baseMessageCollections) {
@@ -80,37 +85,44 @@ class AutoResendManager {
               await completer.future;
 
               if (exception != null) {
-                sbLog.i(
-                    StackTrace.current, 'Stopped because of exception != null');
+                sbLog.i(StackTrace.current,
+                    'Stopped because of exception != null (chatId: $chatId)');
                 break;
               }
 
-              if (_stopAutoResending) break;
+              if (_stopAutoResendingMap[chatId] == true) break;
 
               // Delay to avoid the rate limit
               await Future.delayed(
                   const Duration(milliseconds: _delayForRateLimit));
             }
 
-            if (_stopAutoResending) break;
+            if (_stopAutoResendingMap[chatId] == true) break;
           }
         }
 
-        if (_stopAutoResending) break;
+        if (_stopAutoResendingMap[chatId] == true) break;
       }
     } catch (e) {
       sbLog.e(StackTrace.current, e.toString());
     }
 
-    _stopAutoResending = false;
-    _isAutoResending = false;
-    sbLog.i(StackTrace.current, 'Stopped');
+    _stopAutoResendingMap[chatId] = false;
+    _isAutoResendingMap[chatId] = false;
+    sbLog.i(StackTrace.current, 'Stopped (chatId: $chatId)');
   }
 
-  void stopAutoResend() {
-    if (_isAutoResending) {
-      sbLog.i(StackTrace.current);
-      _stopAutoResending = true;
+  void stopAutoResend(Chat chat) {
+    final chatId = chat.chatId;
+    if (_isAutoResendingMap[chatId] == true) {
+      sbLog.i(StackTrace.current, '(chatId: $chatId)');
+      _stopAutoResendingMap[chatId] = true;
     }
+  }
+
+  /// Clean up state for a specific chat instance
+  void cleanUp(int chatId) {
+    _isAutoResendingMap.remove(chatId);
+    _stopAutoResendingMap.remove(chatId);
   }
 }

@@ -89,7 +89,7 @@ class CollectionManager {
   Future<void> onDisconnected() async {
     sbLog.d(StackTrace.current);
 
-    AutoResendManager().stopAutoResend();
+    AutoResendManager().stopAutoResend(_chat);
   }
 
   Future<void> onReconnected(LoginEvent event) async {
