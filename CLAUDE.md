@@ -199,3 +199,181 @@ As of v4.6.0, the SDK supports Android 16KB page sizes. This requires:
 
 ### Privacy Manifest (iOS)
 To support Apple's privacy manifest requirements, add the contents of `ios/Resources/PrivacyInfo.xcprivacy` to your project's `PrivacyInfo.xcprivacy`.
+
+## 멀티 지원하게 해줘 < 라고 요청하면 해당 Commit에 적용되어있는 변경점에 대해 자동 적용
+## Pending Code Changes
+
+### 멀티 지원 (Multi-Instance Support)
+**Commit**: a5488c5
+**Ticket**: FMTW-1726
+**Purpose**: Fix connect errors by adding multi-instance support to AutoResendManager and MessageRetentionManager
+
+#### Changes Required:
+
+**1. lib/src/internal/main/chat/chat_auth.dart**
+```dart
+// Line 40: Update getConfigTs call to include appId
+// OLD:
+int configTs = await MessageRetentionManager().getConfigTs() ?? 0;
+
+// NEW:
+int configTs =
+    await MessageRetentionManager().getConfigTs(chatContext.appId) ?? 0;
+```
+
+**2. lib/src/internal/main/chat_manager/collection_manager/auto_resend_manager.dart**
+```dart
+// Add multi-instance support using Maps instead of single bool flags
+
+// Class fields - REPLACE:
+// bool _isAutoResending = false;
+// bool _stopAutoResending = false;
+// WITH:
+final Map<int, bool> _isAutoResendingMap = {};
+final Map<int, bool> _stopAutoResendingMap = {};
+
+// startAutoResend method - ADD at beginning:
+final chatId = chat.chatId;
+
+// Update all _isAutoResending checks - REPLACE:
+// if (_isAutoResending)
+// WITH:
+if (_isAutoResendingMap[chatId] == true)
+
+// Update all _stopAutoResending checks - REPLACE:
+// if (_stopAutoResending)
+// WITH:
+if (_stopAutoResendingMap[chatId] == true)
+
+// Update flag settings - REPLACE:
+// _isAutoResending = true;
+// _stopAutoResending = false;
+// WITH:
+_isAutoResendingMap[chatId] = true;
+_stopAutoResendingMap[chatId] = false;
+
+// At end of startAutoResend - REPLACE:
+// _stopAutoResending = false;
+// _isAutoResending = false;
+// WITH:
+_stopAutoResendingMap[chatId] = false;
+_isAutoResendingMap[chatId] = false;
+
+// Update stopAutoResend signature and implementation:
+// OLD:
+void stopAutoResend() {
+  if (_isAutoResending) {
+    sbLog.i(StackTrace.current);
+    _stopAutoResending = true;
+  }
+}
+
+// NEW:
+void stopAutoResend(Chat chat) {
+  final chatId = chat.chatId;
+  if (_isAutoResendingMap[chatId] == true) {
+    sbLog.i(StackTrace.current, '(chatId: $chatId)');
+    _stopAutoResendingMap[chatId] = true;
+  }
+}
+
+// ADD new cleanUp method:
+/// Clean up state for a specific chat instance
+void cleanUp(int chatId) {
+  _isAutoResendingMap.remove(chatId);
+  _stopAutoResendingMap.remove(chatId);
+}
+
+// Update all log messages to include chatId context
+```
+
+**3. lib/src/internal/main/chat_manager/collection_manager/collection_manager.dart**
+```dart
+// Line 92: Update stopAutoResend call to pass chat parameter
+// OLD:
+AutoResendManager().stopAutoResend();
+
+// NEW:
+AutoResendManager().stopAutoResend(_chat);
+```
+
+**4. lib/src/internal/main/chat_manager/collection_manager/message_retention_manager.dart**
+```dart
+// Update config_ts key to be app-specific
+
+// Class field - REPLACE:
+// final String _configTsKey = 'com.sendbird.chat.config_ts';
+// WITH:
+final String _configTsKeyPrefix = 'com.sendbird.chat.config_ts';
+
+// ADD new helper method:
+/// Get config_ts key for specific appId to support multi-instance
+String _getConfigTsKey(String appId) {
+  return '${_configTsKeyPrefix}_$appId';
+}
+
+// Update all method signatures and calls:
+
+// setConfigTs - OLD:
+Future<bool> setConfigTs(int configTs) async {
+  final prefs = await SharedPreferences.getInstance();
+  return await prefs.setInt(_configTsKey, configTs);
+}
+// NEW:
+Future<bool> setConfigTs(String appId, int configTs) async {
+  final prefs = await SharedPreferences.getInstance();
+  return await prefs.setInt(_getConfigTsKey(appId), configTs);
+}
+
+// getConfigTs - OLD:
+Future<int?> getConfigTs() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getInt(_configTsKey);
+}
+// NEW:
+Future<int?> getConfigTs(String appId) async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getInt(_getConfigTsKey(appId));
+}
+
+// clearConfigTs - OLD:
+Future<void> clearConfigTs() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(_configTsKey);
+}
+// NEW:
+Future<void> clearConfigTs(String appId) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(_getConfigTsKey(appId));
+}
+
+// In checkApplicationSettings method:
+// Line 31: REPLACE:
+int? lastConfigTs = await getConfigTs();
+// WITH:
+int? lastConfigTs = await getConfigTs(chat.chatContext.appId);
+
+// Line 89: REPLACE:
+setConfigTs(settings.ts!);
+// WITH:
+setConfigTs(chat.chatContext.appId, settings.ts!);
+```
+
+**5. lib/src/internal/main/chat_manager/connection_manager.dart**
+```dart
+// Add import at top:
+import 'collection_manager/auto_resend_manager.dart';
+
+// Line 354: Update clearConfigTs call
+// OLD:
+await MessageRetentionManager().clearConfigTs();
+// NEW:
+await MessageRetentionManager().clearConfigTs(chat.chatContext.appId);
+AutoResendManager().cleanUp(chat.chatId);
+
+// Line 675: Update getConfigTs call
+// OLD:
+int configTs = await MessageRetentionManager().getConfigTs() ?? 0;
+// NEW:
+int configTs = await MessageRetentionManager().getConfigTs(appId) ?? 0;
+```
