@@ -155,6 +155,14 @@ class CommandManager {
       throw ConnectionRequiredException();
     }
 
+    // Check if WebSocket is actually connected
+    if (!_chat.connectionManager.isConnected() ||
+        !_chat.connectionManager.webSocketClient.isConnected()) {
+      sbLog.w(StackTrace.current,
+          'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+      throw ConnectionRequiredException();
+    }
+
     sbLog.d(
         StackTrace.current, '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
 
