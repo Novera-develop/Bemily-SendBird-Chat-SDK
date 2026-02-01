@@ -93,19 +93,26 @@ class CommandManager {
   }
 
   void cleanUp() {
-    for (final key in _ackTimerMap.keys) {
-      _ackTimerMap[key]?.cancel();
-    }
-    _ackTimerMap.clear();
+    cancelAckTimers();
     _readMap.clear();
     messageOffsetTsCompleterMap.clear();
     _dedupIdMap.clear();
   }
 
+  /// Cancel all pending ack timers without clearing other state.
+  /// Use this when WebSocket is closed to prevent AckTimeoutException.
+  void cancelAckTimers() {
+    for (final key in _ackTimerMap.keys) {
+      _ackTimerMap[key]?.cancel();
+    }
+    _ackTimerMap.clear();
+  }
+
   void clearCompleterMap({SendbirdException? e}) {
+    final exception = e ?? WebSocketFailedException(message: 'WebSocket connection closed');
     _completerMap.forEach((key, value) {
-      if (e != null) {
-        value.completeError(e);
+      if (!value.isCompleted) {
+        value.completeError(exception);
       }
     });
     _completerMap.clear();
@@ -166,9 +173,16 @@ class CommandManager {
 
     final reqId = cmd.requestId;
     if (cmd.isAckRequired && reqId != null) {
+      final completer = Completer<Command>();
+      _completerMap[reqId] = completer;
+
       final timer = Timer(
           Duration(seconds: _chat.chatContext.options.webSocketTimeout), () {
-        throw AckTimeoutException();
+        _ackTimerMap.remove(reqId);
+        final c = _completerMap.remove(reqId);
+        if (c != null && !c.isCompleted) {
+          c.completeError(AckTimeoutException());
+        }
       });
 
       _ackTimerMap[reqId] = timer;
@@ -176,8 +190,6 @@ class CommandManager {
         _readMap[reqId] = DateTime.now().millisecondsSinceEpoch;
       }
 
-      final completer = Completer<Command>();
-      _completerMap[reqId] = completer;
       return completer.future;
     } else {
       return null;
