@@ -109,7 +109,8 @@ class CommandManager {
   }
 
   void clearCompleterMap({SendbirdException? e}) {
-    final exception = e ?? WebSocketFailedException(message: 'WebSocket connection closed');
+    final exception =
+        e ?? WebSocketFailedException(message: 'WebSocket connection closed');
     _completerMap.forEach((key, value) {
       if (!value.isCompleted) {
         value.completeError(exception);
@@ -158,7 +159,7 @@ class CommandManager {
     // Check if WebSocket is actually connected
     if (!_chat.connectionManager.isConnected() ||
         !_chat.connectionManager.webSocketClient.isConnected()) {
-      sbLog.w(StackTrace.current,
+      sbLog.e(StackTrace.current,
           'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
       throw ConnectionRequiredException();
     }
