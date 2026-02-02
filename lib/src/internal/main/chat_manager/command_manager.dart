@@ -428,6 +428,8 @@ class CommandManager {
       _chat.chatContext.setPingInterval(event.pingInterval);
       _chat.chatContext.setWatchdogInterval(event.watchdogInterval);
 
+      _chat.connectionManager.changeState(ConnectedState(chat: _chat));
+
       if (wasReconnecting) {
         await _chat.eventDispatcher.onReconnected(event);
       } else {
@@ -437,7 +439,6 @@ class CommandManager {
       _chat.chatContext.loginCompleter?.complete(event.user);
       _chat.chatContext.loginCompleter = null;
 
-      _chat.connectionManager.changeState(ConnectedState(chat: _chat));
       await _enterEnteredOpenChannels();
 
       if (wasReconnecting) {
