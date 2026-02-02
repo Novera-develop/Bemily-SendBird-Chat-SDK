@@ -157,18 +157,23 @@ class CommandManager {
     }
 
     // Check if WebSocket is actually connected, wait for reconnect if needed
-    const maxRetryCount = 5;
+    const maxRetryCount = 3;
     var retryCount = 0;
 
     while (!_chat.connectionManager.isConnected() ||
         !_chat.connectionManager.webSocketClient.isConnected()) {
-      sbLog.e(StackTrace.current,
-          'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+      sbLog.i(StackTrace.current,
+          'WebSocket not connected (retry: $retryCount). isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}, isDisconnected: ${_chat.connectionManager.isDisconnected()}, isReconnecting: ${_chat.connectionManager.isReconnecting()}');
 
-      // If disconnected (not reconnecting/connecting), try to reconnect automatically
-      if (_chat.connectionManager.isDisconnected()) {
-        sbLog.e(StackTrace.current,
-            'Disconnected state, attempting auto reconnect...');
+      // Try to reconnect if:
+      // 1. Disconnected state, OR
+      // 2. WebSocket is not connected (even if state is Reconnecting, WS might have failed)
+      final shouldReconnect = _chat.connectionManager.isDisconnected() ||
+          (!_chat.connectionManager.webSocketClient.isConnected() &&
+              !_chat.connectionManager.isConnecting());
+
+      if (shouldReconnect) {
+        sbLog.i(StackTrace.current, 'Attempting auto reconnect...');
         final reconnectStarted =
             await _chat.connectionManager.reconnect(reset: true);
         if (!reconnectStarted) {
@@ -182,7 +187,7 @@ class CommandManager {
               _chat.connectionManager.isConnecting()) &&
           _chat.chatContext.loginCompleter != null &&
           !_chat.chatContext.loginCompleter!.isCompleted) {
-        sbLog.e(StackTrace.current, 'Waiting for connection to complete...');
+        sbLog.i(StackTrace.current, 'Waiting for connection to complete...');
         try {
           await _chat.chatContext.loginCompleter!.future.timeout(
             Duration(seconds: _chat.chatContext.options.connectionTimeout),
@@ -190,7 +195,7 @@ class CommandManager {
               throw ConnectionRequiredException();
             },
           );
-          sbLog.e(
+          sbLog.i(
               StackTrace.current, 'Reconnect completed, proceeding with send');
         } catch (e) {
           sbLog.e(StackTrace.current, 'Reconnect failed: $e');
@@ -202,7 +207,7 @@ class CommandManager {
       // Wait with polling until connected or timeout
       if (!_chat.connectionManager.isConnected() &&
           _chat.connectionManager.webSocketClient.isConnected()) {
-        sbLog.e(StackTrace.current,
+        sbLog.i(StackTrace.current,
             'WebSocket connected but waiting for LOGI, polling for connection state...');
         const maxWaitMs = 5000;
         const pollIntervalMs = 100;
@@ -214,7 +219,7 @@ class CommandManager {
           waitedMs += pollIntervalMs;
         }
         if (_chat.connectionManager.isConnected()) {
-          sbLog.e(StackTrace.current,
+          sbLog.i(StackTrace.current,
               'Connection state updated to connected after ${waitedMs}ms');
         }
       }
@@ -233,7 +238,7 @@ class CommandManager {
         throw ConnectionRequiredException();
       }
 
-      sbLog.e(StackTrace.current,
+      sbLog.i(StackTrace.current,
           'Connection lost during wait, retrying... ($retryCount/$maxRetryCount)');
     }
 
