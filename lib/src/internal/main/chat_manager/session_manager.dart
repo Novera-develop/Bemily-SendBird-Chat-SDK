@@ -31,8 +31,8 @@ class _AccessTokenRequesterImpl extends AccessTokenRequester {
 }
 
 class SessionManager {
-  String _userIdKeyPath = 'com.sendbird.chat.user_id';
-  String _sessionKeyPath = 'com.sendbird.chat.session_key';
+  late String _userIdKeyPath;
+  late String _sessionKeyPath;
 
   final List<Completer> _updateSessionKeyCompleterList = [];
   bool _isUpdatingSessionKey = false;
@@ -41,6 +41,10 @@ class SessionManager {
   late AccessTokenRequester accessTokenRequester;
 
   SessionManager({required Chat chat}) : _chat = chat {
+    // Use appId to support multi-instance
+    final appId = chat.chatContext.appId;
+    _userIdKeyPath = 'com.sendbird.chat.user_id_$appId';
+    _sessionKeyPath = 'com.sendbird.chat.session_key_$appId';
     accessTokenRequester = _AccessTokenRequesterImpl(sessionManager: this);
   }
 

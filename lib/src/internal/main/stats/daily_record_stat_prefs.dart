@@ -12,12 +12,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class DailyRecordStatPrefs {
   final deleted = 'deleted';
+  late final String _keyPrefix;
+
+  final String _appId;
+
+  DailyRecordStatPrefs({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    _keyPrefix = '${DailyRecordStat.keyPrefix}_$appId';
+  }
 
   SharedPreferences? _sharedPreferences;
 
   Future<SharedPreferences> get _prefs async {
     _sharedPreferences ??= await SharedPreferences.getInstance();
     return _sharedPreferences!;
+  }
+
+  /// Get key with appId prefix for multi-instance support
+  String _getKey(DailyRecordStat stat) {
+    return '${_appId}_${stat.key}';
   }
 
   Future<List<DailyRecordStat>> get stats async {
@@ -27,7 +40,7 @@ class DailyRecordStatPrefs {
     final dailyRecordStats = prefs
         .getKeys()
         .map((key) {
-          if (key.contains(DailyRecordStat.keyPrefix)) {
+          if (key.contains(_keyPrefix)) {
             final json = prefs.getString(key);
             if (json != null && json.isNotEmpty) {
               return _getDailyRecordStat(json);
@@ -50,7 +63,7 @@ class DailyRecordStatPrefs {
     final dailyRecordStats = prefs
         .getKeys()
         .map((key) {
-          if (key.contains(DailyRecordStat.keyPrefix) &&
+          if (key.contains(_keyPrefix) &&
               key.contains(todayDateString) == false) {
             final json = prefs.getString(key);
             if (json != null && json.isNotEmpty) {
@@ -73,7 +86,7 @@ class DailyRecordStatPrefs {
     final todayDateString = DailyRecordStat.getDateString(now);
     final count = prefs
         .getKeys()
-        .where((key) => (key.contains(DailyRecordStat.keyPrefix) &&
+        .where((key) => (key.contains(_keyPrefix) &&
             key.contains(todayDateString) == false))
         .length;
 
@@ -112,7 +125,8 @@ class DailyRecordStatPrefs {
     sbLog.d(StackTrace.current);
 
     final prefs = (await _prefs);
-    final json = prefs.getString(stat.key);
+    final key = _getKey(stat);
+    final json = prefs.getString(key);
 
     if (json != null && json.isNotEmpty) {
       if (json == deleted) return;
@@ -120,10 +134,10 @@ class DailyRecordStatPrefs {
       final newStat = _getDailyRecordStat(json);
       if (newStat != null) {
         newStat.update(stat);
-        await prefs.setString(newStat.key, jsonEncode(newStat));
+        await prefs.setString(key, jsonEncode(newStat));
       }
     } else {
-      await prefs.setString(stat.key, jsonEncode(stat));
+      await prefs.setString(key, jsonEncode(stat));
     }
   }
 
@@ -132,7 +146,7 @@ class DailyRecordStatPrefs {
 
     final prefs = (await _prefs);
     for (final stat in stats) {
-      await prefs.setString(stat.key, deleted);
+      await prefs.setString(_getKey(stat), deleted);
     }
   }
 
@@ -141,7 +155,7 @@ class DailyRecordStatPrefs {
 
     final prefs = (await _prefs);
     for (final key in prefs.getKeys()) {
-      if (key.contains(DailyRecordStat.keyPrefix)) {
+      if (key.contains(_keyPrefix)) {
         final json = prefs.getString(key);
         if (json != null && json.isNotEmpty) {
           final dailyRecordStat = _getDailyRecordStat(json);
@@ -160,7 +174,7 @@ class DailyRecordStatPrefs {
 
     final prefs = (await _prefs);
     for (final key in prefs.getKeys()) {
-      if (key.contains(DailyRecordStat.keyPrefix)) {
+      if (key.contains(_keyPrefix)) {
         await prefs.remove(key);
       }
     }

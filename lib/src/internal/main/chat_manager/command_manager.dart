@@ -159,7 +159,7 @@ class CommandManager {
     // Check if WebSocket is actually connected, wait for reconnect if needed
     if (!_chat.connectionManager.isConnected() ||
         !_chat.connectionManager.webSocketClient.isConnected()) {
-      sbLog.e(StackTrace.current,
+      sbLog.d(StackTrace.current,
           'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
 
       // Wait for reconnect to complete if reconnecting
@@ -174,7 +174,7 @@ class CommandManager {
               throw ConnectionRequiredException();
             },
           );
-          sbLog.e(
+          sbLog.d(
               StackTrace.current, 'Reconnect completed, proceeding with send');
         } catch (e) {
           sbLog.e(StackTrace.current, 'Reconnect failed: $e');

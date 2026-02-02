@@ -113,8 +113,8 @@ class StatManager {
 
   StatManager({required Chat chat})
       : _chat = chat,
-        defaultStatPrefs = DefaultStatPrefs(),
-        dailyRecordStatPrefs = DailyRecordStatPrefs();
+        defaultStatPrefs = DefaultStatPrefs(appId: chat.chatContext.appId),
+        dailyRecordStatPrefs = DailyRecordStatPrefs(appId: chat.chatContext.appId);
 
   //+ Public
   Future<bool> appendStat({

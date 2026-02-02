@@ -40,9 +40,9 @@ import 'package:universal_io/io.dart';
 
 class DBManager {
   final int _dbVersion = 2;
-  final String _dbName = 'sendbird_chat';
+  late final String _dbName;
   final int _maxDBFileSize = 256; // MB
-  final String _dbVersionKey = 'com.sendbird.chat.db_version';
+  late final String _dbVersionKey;
 
   late final Isar _isar;
   bool _isInitialized = false;
@@ -51,7 +51,12 @@ class DBManager {
   late final DB _db;
   late final Directory _dbDir;
 
-  DBManager({required Chat chat}) : _chat = chat;
+  DBManager({required Chat chat}) : _chat = chat {
+    // Use appId to support multi-instance
+    final appId = chat.chatContext.appId;
+    _dbName = 'sendbird_chat_$appId';
+    _dbVersionKey = 'com.sendbird.chat.db_version_$appId';
+  }
 
   bool isInitialized() {
     return _isInitialized;

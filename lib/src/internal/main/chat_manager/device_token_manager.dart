@@ -5,11 +5,17 @@ import 'package:sendbird_chat_sdk/src/internal/network/websocket/event/login_eve
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DeviceTokenManager {
-  final String prefDeviceTokenList = 'com.sendbird.chat.device_token_list';
-  final String prefDeviceTokenLastDeletedAt =
-      'com.sendbird.chat.device_token_last_deleted_at';
+  late final String prefDeviceTokenList;
+  late final String prefDeviceTokenLastDeletedAt;
 
-  DeviceTokenManager();
+  final String _appId;
+
+  DeviceTokenManager({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    prefDeviceTokenList = 'com.sendbird.chat.device_token_list_$appId';
+    prefDeviceTokenLastDeletedAt =
+        'com.sendbird.chat.device_token_last_deleted_at_$appId';
+  }
 
   final int maxDeviceTokenCount = 10; // Check
 

@@ -148,7 +148,7 @@ class Chat with WidgetsBindingObserver {
     eventDispatcher = EventDispatcher(chat: this);
     collectionManager = CollectionManager(chat: this);
     dbManager = DBManager(chat: this);
-    deviceTokenManager = DeviceTokenManager();
+    deviceTokenManager = DeviceTokenManager(appId: appId);
     fileCacheManager = FileCacheManager(chat: this);
 
     _listenConnectivityChangedEvent();

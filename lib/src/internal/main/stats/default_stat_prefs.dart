@@ -16,11 +16,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 class DefaultStatPrefs {
-  final prefDefaultStats = 'com.sendbird.chat.default_stats';
-  final prefDefaultStatsCount = 'com.sendbird.chat.default_stats_count';
-  final prefDefaultStatsLastSentAt =
-      'com.sendbird.chat.default_stats_last_sent_at';
-  final prefDefaultStatsDeviceId = 'com.sendbird.chat.default_stats_device_id';
+  late final String prefDefaultStats;
+  late final String prefDefaultStatsCount;
+  late final String prefDefaultStatsLastSentAt;
+  late final String prefDefaultStatsDeviceId;
+
+  final String _appId;
+
+  DefaultStatPrefs({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    prefDefaultStats = 'com.sendbird.chat.default_stats_$appId';
+    prefDefaultStatsCount = 'com.sendbird.chat.default_stats_count_$appId';
+    prefDefaultStatsLastSentAt =
+        'com.sendbird.chat.default_stats_last_sent_at_$appId';
+    prefDefaultStatsDeviceId =
+        'com.sendbird.chat.default_stats_device_id_$appId';
+  }
 
   SharedPreferences? _sharedPreferences;
 
