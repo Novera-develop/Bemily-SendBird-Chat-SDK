@@ -256,21 +256,45 @@ class CommandManager {
       if (!_chat.connectionManager.isConnected() &&
           _chat.connectionManager.webSocketClient.isConnected()) {
         sbLog.i(StackTrace.current,
-            'WebSocket connected but waiting for LOGI, polling for connection state...');
-        const maxWaitMs = 5000;
-        const pollIntervalMs = 100;
-        var waitedMs = 0;
-        while (!_chat.connectionManager.isConnected() &&
-            _chat.connectionManager.webSocketClient.isConnected() &&
-            waitedMs < maxWaitMs) {
-          await Future.delayed(const Duration(milliseconds: pollIntervalMs));
-          waitedMs += pollIntervalMs;
+            'WebSocket is connected but state is not Connected. Forcing WebSocket reconnect...');
+        try {
+          await _chat.connectionManager.webSocketClient.close(
+            reason: 'State mismatch reconnect',
+          );
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'WebSocket disconnect failed: $e');
         }
-        if (_chat.connectionManager.isConnected()) {
-          sbLog.i(StackTrace.current,
-              'Connection state updated to connected after ${waitedMs}ms');
+        try {
+          _chat.connectionManager.doConnect(
+            _chat.chatContext.currentUserId!,
+            nickname: _chat.chatContext.nickname,
+            accessToken: _chat.chatContext.accessToken,
+            apiHost: _chat.chatContext.apiHost,
+            wsHost: _chat.chatContext.wsHost,
+            isDelayedConnecting: true,
+          );
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'WebSocket connect failed: $e');
         }
       }
+      // if (!_chat.connectionManager.isConnected() &&
+      //     _chat.connectionManager.webSocketClient.isConnected()) {
+      //   sbLog.i(StackTrace.current,
+      //       'WebSocket connected but waiting for LOGI, polling for connection state...');
+      //   const maxWaitMs = 5000;
+      //   const pollIntervalMs = 100;
+      //   var waitedMs = 0;
+      //   while (!_chat.connectionManager.isConnected() &&
+      //       _chat.connectionManager.webSocketClient.isConnected() &&
+      //       waitedMs < maxWaitMs) {
+      //     await Future.delayed(const Duration(milliseconds: pollIntervalMs));
+      //     waitedMs += pollIntervalMs;
+      //   }
+      //   if (_chat.connectionManager.isConnected()) {
+      //     sbLog.i(StackTrace.current,
+      //         'Connection state updated to connected after ${waitedMs}ms');
+      //   }
+      // }
 
       // Check if connected now
       if (_chat.connectionManager.isConnected() &&
