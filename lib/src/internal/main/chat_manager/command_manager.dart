@@ -157,7 +157,10 @@ class CommandManager {
     }
 
     // Check if WebSocket is actually connected, wait for reconnect if needed
-    if (!_chat.connectionManager.isConnected() ||
+    const maxRetryCount = 2;
+    var retryCount = 0;
+
+    while (!_chat.connectionManager.isConnected() ||
         !_chat.connectionManager.webSocketClient.isConnected()) {
       sbLog.e(StackTrace.current,
           'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
@@ -204,7 +207,9 @@ class CommandManager {
         const maxWaitMs = 5000;
         const pollIntervalMs = 100;
         var waitedMs = 0;
-        while (!_chat.connectionManager.isConnected() && waitedMs < maxWaitMs) {
+        while (!_chat.connectionManager.isConnected() &&
+            _chat.connectionManager.webSocketClient.isConnected() &&
+            waitedMs < maxWaitMs) {
           await Future.delayed(const Duration(milliseconds: pollIntervalMs));
           waitedMs += pollIntervalMs;
         }
@@ -214,13 +219,22 @@ class CommandManager {
         }
       }
 
-      // Check connection again after waiting
-      if (!_chat.connectionManager.isConnected() ||
-          !_chat.connectionManager.webSocketClient.isConnected()) {
+      // Check if connected now
+      if (_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        break;
+      }
+
+      // Retry if not connected
+      retryCount++;
+      if (retryCount >= maxRetryCount) {
         sbLog.e(StackTrace.current,
-            'Still not connected after waiting. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+            'Still not connected after $retryCount retries. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
         throw ConnectionRequiredException();
       }
+
+      sbLog.e(StackTrace.current,
+          'Connection lost during wait, retrying... ($retryCount/$maxRetryCount)');
     }
 
     sbLog.d(
