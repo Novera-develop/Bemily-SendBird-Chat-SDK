@@ -53,6 +53,10 @@ class CommandManager {
   final Map<String, Completer<int?>> messageOffsetTsCompleterMap = {};
   final Map<String, int> _dedupIdMap = {};
 
+  // Queue for ensuring message order during connection wait
+  final List<Completer<void>> _connectionWaitQueue = [];
+  bool _isProcessingConnectionWait = false;
+
   int? logiTs;
 
   final Chat _chat;
@@ -150,14 +154,58 @@ class CommandManager {
     return _dedupIdMap.length;
   }
 
-  Future<Command?> sendCommand(Command cmd) async {
-    if (_chat.chatContext.currentUser == null) {
-      // NOTE: some test cases execute async socket data
-      throw ConnectionRequiredException();
+  /// Waits for connection with queue to ensure message order
+  Future<void> _waitForConnectionWithQueue() async {
+    // Add to queue and wait for turn
+    final myCompleter = Completer<void>();
+    _connectionWaitQueue.add(myCompleter);
+    final queuePosition = _connectionWaitQueue.length;
+    sbLog.i(StackTrace.current,
+        'Added to connection wait queue (position: $queuePosition)');
+
+    // If another message is already processing connection wait, wait for our turn
+    if (_isProcessingConnectionWait) {
+      sbLog.i(StackTrace.current, 'Waiting for turn in queue...');
+      await myCompleter.future;
+      return;
     }
 
-    // Check if WebSocket is actually connected, wait for reconnect if needed
-    const maxRetryCount = 3;
+    // We are first in queue, process connection wait
+    _isProcessingConnectionWait = true;
+
+    try {
+      await _doWaitForConnection();
+
+      // Connection successful, release all waiting messages in order
+      sbLog.i(StackTrace.current,
+          'Connection established, releasing ${_connectionWaitQueue.length} queued messages');
+      while (_connectionWaitQueue.isNotEmpty) {
+        final completer = _connectionWaitQueue.removeAt(0);
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+        // Small delay to ensure order is maintained
+        await Future.delayed(const Duration(milliseconds: 1));
+      }
+    } catch (e) {
+      // Connection failed, fail all waiting messages
+      sbLog.e(StackTrace.current,
+          'Connection failed, failing ${_connectionWaitQueue.length} queued messages');
+      while (_connectionWaitQueue.isNotEmpty) {
+        final completer = _connectionWaitQueue.removeAt(0);
+        if (!completer.isCompleted) {
+          completer.completeError(e);
+        }
+      }
+      rethrow;
+    } finally {
+      _isProcessingConnectionWait = false;
+    }
+  }
+
+  /// Internal method to wait for connection with retry logic
+  Future<void> _doWaitForConnection() async {
+    const maxRetryCount = 5;
     var retryCount = 0;
 
     while (!_chat.connectionManager.isConnected() ||
@@ -240,6 +288,19 @@ class CommandManager {
 
       sbLog.i(StackTrace.current,
           'Connection lost during wait, retrying... ($retryCount/$maxRetryCount)');
+    }
+  }
+
+  Future<Command?> sendCommand(Command cmd) async {
+    if (_chat.chatContext.currentUser == null) {
+      // NOTE: some test cases execute async socket data
+      throw ConnectionRequiredException();
+    }
+
+    // Check if WebSocket is actually connected, wait for reconnect if needed
+    if (!_chat.connectionManager.isConnected() ||
+        !_chat.connectionManager.webSocketClient.isConnected()) {
+      await _waitForConnectionWithQueue();
     }
 
     sbLog.d(
