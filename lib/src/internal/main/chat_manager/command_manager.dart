@@ -162,6 +162,18 @@ class CommandManager {
       sbLog.e(StackTrace.current,
           'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
 
+      // If disconnected (not reconnecting/connecting), try to reconnect automatically
+      if (_chat.connectionManager.isDisconnected()) {
+        sbLog.i(StackTrace.current,
+            'Disconnected state, attempting auto reconnect...');
+        final reconnectStarted =
+            await _chat.connectionManager.reconnect(reset: true);
+        if (!reconnectStarted) {
+          sbLog.e(StackTrace.current, 'Failed to start reconnect');
+          throw ConnectionRequiredException();
+        }
+      }
+
       // Wait for connect/reconnect to complete
       if ((_chat.connectionManager.isReconnecting() ||
               _chat.connectionManager.isConnecting()) &&
