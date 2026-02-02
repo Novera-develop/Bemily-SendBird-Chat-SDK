@@ -9,6 +9,7 @@ part of 'og_meta_data.dart';
 OGMetaData _$OGMetaDataFromJson(Map<String, dynamic> json) => OGMetaData(
       title: json['og:title'] as String?,
       url: json['og:url'] as String?,
+      originalUrl: json['og:original_url'] as String?,
       description: json['og:description'] as String?,
       ogImage: json['og:image'] == null
           ? null
@@ -19,6 +20,7 @@ Map<String, dynamic> _$OGMetaDataToJson(OGMetaData instance) =>
     <String, dynamic>{
       'og:title': instance.title,
       'og:url': instance.url,
+      'og:original_url': instance.originalUrl,
       'og:description': instance.description,
       'og:image': instance.ogImage?.toJson(),
     };

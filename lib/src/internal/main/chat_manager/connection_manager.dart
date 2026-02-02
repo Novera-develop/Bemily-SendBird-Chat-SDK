@@ -528,6 +528,7 @@ class ConnectionManager {
 
   void _onWebSocketClosed() async {
     chat.commandManager.clearCompleterMap();
+    chat.commandManager.cancelAckTimers(); // Cancel ack timers to prevent AckTimeoutException
 
     final closeCode = webSocketClient.getCloseCode();
     if (closeCode != null) {

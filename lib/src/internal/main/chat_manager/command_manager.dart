@@ -93,19 +93,27 @@ class CommandManager {
   }
 
   void cleanUp() {
-    for (final key in _ackTimerMap.keys) {
-      _ackTimerMap[key]?.cancel();
-    }
-    _ackTimerMap.clear();
+    cancelAckTimers();
     _readMap.clear();
     messageOffsetTsCompleterMap.clear();
     _dedupIdMap.clear();
   }
 
+  /// Cancel all pending ack timers without clearing other state.
+  /// Use this when WebSocket is closed to prevent AckTimeoutException.
+  void cancelAckTimers() {
+    for (final key in _ackTimerMap.keys) {
+      _ackTimerMap[key]?.cancel();
+    }
+    _ackTimerMap.clear();
+  }
+
   void clearCompleterMap({SendbirdException? e}) {
+    final exception =
+        e ?? WebSocketFailedException(message: 'WebSocket connection closed');
     _completerMap.forEach((key, value) {
-      if (e != null) {
-        value.completeError(e);
+      if (!value.isCompleted) {
+        value.completeError(exception);
       }
     });
     _completerMap.clear();
@@ -148,6 +156,92 @@ class CommandManager {
       throw ConnectionRequiredException();
     }
 
+    // Check if WebSocket is actually connected, wait for reconnect if needed
+    const maxRetryCount = 3;
+    var retryCount = 0;
+
+    while (!_chat.connectionManager.isConnected() ||
+        !_chat.connectionManager.webSocketClient.isConnected()) {
+      sbLog.i(StackTrace.current,
+          'WebSocket not connected (retry: $retryCount). isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}, isDisconnected: ${_chat.connectionManager.isDisconnected()}, isReconnecting: ${_chat.connectionManager.isReconnecting()}');
+
+      // Try to reconnect if:
+      // 1. Disconnected state, OR
+      // 2. WebSocket is not connected (even if state is Reconnecting, WS might have failed)
+      final shouldReconnect = _chat.connectionManager.isDisconnected() ||
+          (!_chat.connectionManager.webSocketClient.isConnected() &&
+              !_chat.connectionManager.isConnecting());
+
+      if (shouldReconnect) {
+        sbLog.i(StackTrace.current, 'Attempting auto reconnect...');
+        final reconnectStarted =
+            await _chat.connectionManager.reconnect(reset: true);
+        if (!reconnectStarted) {
+          sbLog.e(StackTrace.current, 'Failed to start reconnect');
+          throw ConnectionRequiredException();
+        }
+      }
+
+      // Wait for connect/reconnect to complete
+      if ((_chat.connectionManager.isReconnecting() ||
+              _chat.connectionManager.isConnecting()) &&
+          _chat.chatContext.loginCompleter != null &&
+          !_chat.chatContext.loginCompleter!.isCompleted) {
+        sbLog.i(StackTrace.current, 'Waiting for connection to complete...');
+        try {
+          await _chat.chatContext.loginCompleter!.future.timeout(
+            Duration(seconds: _chat.chatContext.options.connectionTimeout),
+            onTimeout: () {
+              throw ConnectionRequiredException();
+            },
+          );
+          sbLog.i(
+              StackTrace.current, 'Reconnect completed, proceeding with send');
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'Reconnect failed: $e');
+          throw ConnectionRequiredException();
+        }
+      }
+
+      // WebSocket is connected but state is not ConnectedState yet (waiting for LOGI)
+      // Wait with polling until connected or timeout
+      if (!_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        sbLog.i(StackTrace.current,
+            'WebSocket connected but waiting for LOGI, polling for connection state...');
+        const maxWaitMs = 5000;
+        const pollIntervalMs = 100;
+        var waitedMs = 0;
+        while (!_chat.connectionManager.isConnected() &&
+            _chat.connectionManager.webSocketClient.isConnected() &&
+            waitedMs < maxWaitMs) {
+          await Future.delayed(const Duration(milliseconds: pollIntervalMs));
+          waitedMs += pollIntervalMs;
+        }
+        if (_chat.connectionManager.isConnected()) {
+          sbLog.i(StackTrace.current,
+              'Connection state updated to connected after ${waitedMs}ms');
+        }
+      }
+
+      // Check if connected now
+      if (_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        break;
+      }
+
+      // Retry if not connected
+      retryCount++;
+      if (retryCount >= maxRetryCount) {
+        sbLog.e(StackTrace.current,
+            'Still not connected after $retryCount retries. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+        throw ConnectionRequiredException();
+      }
+
+      sbLog.i(StackTrace.current,
+          'Connection lost during wait, retrying... ($retryCount/$maxRetryCount)');
+    }
+
     sbLog.d(
         StackTrace.current, '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
 
@@ -166,9 +260,16 @@ class CommandManager {
 
     final reqId = cmd.requestId;
     if (cmd.isAckRequired && reqId != null) {
+      final completer = Completer<Command>();
+      _completerMap[reqId] = completer;
+
       final timer = Timer(
           Duration(seconds: _chat.chatContext.options.webSocketTimeout), () {
-        throw AckTimeoutException();
+        _ackTimerMap.remove(reqId);
+        final c = _completerMap.remove(reqId);
+        if (c != null && !c.isCompleted) {
+          c.completeError(AckTimeoutException());
+        }
       });
 
       _ackTimerMap[reqId] = timer;
@@ -176,8 +277,6 @@ class CommandManager {
         _readMap[reqId] = DateTime.now().millisecondsSinceEpoch;
       }
 
-      final completer = Completer<Command>();
-      _completerMap[reqId] = completer;
       return completer.future;
     } else {
       return null;
@@ -380,6 +479,8 @@ class CommandManager {
       _chat.chatContext.setPingInterval(event.pingInterval);
       _chat.chatContext.setWatchdogInterval(event.watchdogInterval);
 
+      _chat.connectionManager.changeState(ConnectedState(chat: _chat));
+
       if (wasReconnecting) {
         await _chat.eventDispatcher.onReconnected(event);
       } else {
@@ -389,7 +490,6 @@ class CommandManager {
       _chat.chatContext.loginCompleter?.complete(event.user);
       _chat.chatContext.loginCompleter = null;
 
-      _chat.connectionManager.changeState(ConnectedState(chat: _chat));
       await _enterEnteredOpenChannels();
 
       if (wasReconnecting) {

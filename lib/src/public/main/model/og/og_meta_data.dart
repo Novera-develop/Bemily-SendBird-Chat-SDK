@@ -19,6 +19,9 @@ class OGMetaData {
   @JsonKey(name: 'og:url')
   String? url;
 
+  @JsonKey(name: 'og:original_url')
+  String? originalUrl;
+
   /// A one to two sentence description of the object.
   /// ex: "Sean Connery found fame and fortune
   /// as the suave, sophisticated British agent, James Bond."
@@ -33,6 +36,7 @@ class OGMetaData {
   OGMetaData({
     this.title,
     this.url,
+    this.originalUrl,
     this.description,
     this.ogImage,
   });
