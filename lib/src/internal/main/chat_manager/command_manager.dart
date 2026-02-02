@@ -265,7 +265,7 @@ class CommandManager {
           sbLog.e(StackTrace.current, 'WebSocket disconnect failed: $e');
         }
         try {
-          _chat.connectionManager.doConnect(
+          await _chat.connectionManager.doConnect(
             _chat.chatContext.currentUserId!,
             nickname: _chat.chatContext.nickname,
             accessToken: _chat.chatContext.accessToken,
