@@ -157,7 +157,7 @@ class CommandManager {
     }
 
     // Check if WebSocket is actually connected, wait for reconnect if needed
-    const maxRetryCount = 2;
+    const maxRetryCount = 5;
     var retryCount = 0;
 
     while (!_chat.connectionManager.isConnected() ||
