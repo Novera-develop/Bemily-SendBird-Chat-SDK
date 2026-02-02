@@ -156,12 +156,39 @@ class CommandManager {
       throw ConnectionRequiredException();
     }
 
-    // Check if WebSocket is actually connected
+    // Check if WebSocket is actually connected, wait for reconnect if needed
     if (!_chat.connectionManager.isConnected() ||
         !_chat.connectionManager.webSocketClient.isConnected()) {
       sbLog.e(StackTrace.current,
           'WebSocket not connected. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
-      throw ConnectionRequiredException();
+
+      // Wait for reconnect to complete if reconnecting
+      if (_chat.connectionManager.isReconnecting() &&
+          _chat.chatContext.loginCompleter != null &&
+          !_chat.chatContext.loginCompleter!.isCompleted) {
+        sbLog.d(StackTrace.current, 'Waiting for reconnect to complete...');
+        try {
+          await _chat.chatContext.loginCompleter!.future.timeout(
+            Duration(seconds: _chat.chatContext.options.connectionTimeout),
+            onTimeout: () {
+              throw ConnectionRequiredException();
+            },
+          );
+          sbLog.e(
+              StackTrace.current, 'Reconnect completed, proceeding with send');
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'Reconnect failed: $e');
+          throw ConnectionRequiredException();
+        }
+      }
+
+      // Check connection again after waiting
+      if (!_chat.connectionManager.isConnected() ||
+          !_chat.connectionManager.webSocketClient.isConnected()) {
+        sbLog.e(StackTrace.current,
+            'Still not connected after waiting. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+        throw ConnectionRequiredException();
+      }
     }
 
     sbLog.d(
