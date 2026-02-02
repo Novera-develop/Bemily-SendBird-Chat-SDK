@@ -164,7 +164,7 @@ class CommandManager {
 
       // If disconnected (not reconnecting/connecting), try to reconnect automatically
       if (_chat.connectionManager.isDisconnected()) {
-        sbLog.i(StackTrace.current,
+        sbLog.e(StackTrace.current,
             'Disconnected state, attempting auto reconnect...');
         final reconnectStarted =
             await _chat.connectionManager.reconnect(reset: true);
