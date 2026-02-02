@@ -49,20 +49,20 @@ class EventDispatcher {
   Future<void> _syncMissedMessages() async {
     final lastConnectedAt = _chat.chatContext.lastConnectedAt;
     if (lastConnectedAt == null || lastConnectedAt == 0) {
-      sbLog.d(StackTrace.current, 'No lastConnectedAt, skipping message sync');
+      sbLog.e(StackTrace.current, 'No lastConnectedAt, skipping message sync');
       return;
     }
 
     final cachedChannels = _chat.channelCache.getCachedChannels();
-    final groupChannels =
-        cachedChannels.whereType<GroupChannel>().toList();
+    final groupChannels = cachedChannels.whereType<GroupChannel>().toList();
 
     if (groupChannels.isEmpty) {
-      sbLog.d(StackTrace.current, 'No cached GroupChannels, skipping message sync');
+      sbLog.e(
+          StackTrace.current, 'No cached GroupChannels, skipping message sync');
       return;
     }
 
-    sbLog.i(StackTrace.current,
+    sbLog.e(StackTrace.current,
         'Syncing missed messages for ${groupChannels.length} channels since $lastConnectedAt');
 
     for (final channel in groupChannels) {
@@ -96,7 +96,7 @@ class EventDispatcher {
         .toList();
 
     if (newMessages.isEmpty) {
-      sbLog.d(StackTrace.current,
+      sbLog.e(StackTrace.current,
           'No new messages for channel ${channel.channelUrl}');
       return;
     }
@@ -104,7 +104,7 @@ class EventDispatcher {
     // Sort by createdAt to maintain order
     newMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-    sbLog.i(StackTrace.current,
+    sbLog.e(StackTrace.current,
         'Found ${newMessages.length} missed messages for channel ${channel.channelUrl}');
 
     // Notify handlers for each message
