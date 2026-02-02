@@ -195,6 +195,25 @@ class CommandManager {
         }
       }
 
+      // WebSocket is connected but state is not ConnectedState yet (waiting for LOGI)
+      // Wait with polling until connected or timeout
+      if (!_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        sbLog.e(StackTrace.current,
+            'WebSocket connected but waiting for LOGI, polling for connection state...');
+        const maxWaitMs = 5000;
+        const pollIntervalMs = 100;
+        var waitedMs = 0;
+        while (!_chat.connectionManager.isConnected() && waitedMs < maxWaitMs) {
+          await Future.delayed(const Duration(milliseconds: pollIntervalMs));
+          waitedMs += pollIntervalMs;
+        }
+        if (_chat.connectionManager.isConnected()) {
+          sbLog.e(StackTrace.current,
+              'Connection state updated to connected after ${waitedMs}ms');
+        }
+      }
+
       // Check connection again after waiting
       if (!_chat.connectionManager.isConnected() ||
           !_chat.connectionManager.webSocketClient.isConnected()) {
