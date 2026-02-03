@@ -197,7 +197,14 @@ extension BaseChannelMessage on BaseChannel {
         }
 
         if (handler != null) {
-          handler(pendingUserMessage, e);
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingUserMessage.isAutoResendable()) {
+            pendingUserMessage.pendingHandler = handler;
+          } else {
+            handler(pendingUserMessage, e);
+          }
         }
       }
     });
@@ -548,7 +555,14 @@ extension BaseChannelMessage on BaseChannel {
         }
 
         if (handler != null) {
-          handler(pendingFileMessage, e);
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingFileMessage.isAutoResendable()) {
+            pendingFileMessage.pendingHandler = handler;
+          } else {
+            handler(pendingFileMessage, e);
+          }
         }
       }
     });

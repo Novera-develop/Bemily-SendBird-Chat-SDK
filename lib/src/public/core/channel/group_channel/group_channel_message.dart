@@ -362,7 +362,14 @@ extension GroupChannelMessage on GroupChannel {
         }
 
         if (handler != null) {
-          handler(pendingFileMessage, e);
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingFileMessage.isAutoResendable()) {
+            pendingFileMessage.pendingHandler = handler;
+          } else {
+            handler(pendingFileMessage, e);
+          }
         }
       }
     });

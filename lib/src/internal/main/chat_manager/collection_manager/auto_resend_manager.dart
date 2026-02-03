@@ -50,6 +50,9 @@ class AutoResendManager {
 
           for (final failedMessage in failedMessages) {
             if (failedMessage.isAutoResendable()) {
+              // Get pending handler before resend
+              final pendingHandler = failedMessage.pendingHandler;
+
               // Resend a message
               Completer completer = Completer();
               SendbirdException? exception;
@@ -58,6 +61,11 @@ class AutoResendManager {
                   failedMessage,
                   handler: (UserMessage message, SendbirdException? e) {
                     exception = e;
+                    // Call pending handler with result
+                    if (pendingHandler != null) {
+                      (pendingHandler as UserMessageHandler)(message, e);
+                      failedMessage.pendingHandler = null;
+                    }
                     completer.complete();
                   },
                 );
@@ -66,6 +74,11 @@ class AutoResendManager {
                   failedMessage,
                   handler: (FileMessage message, SendbirdException? e) {
                     exception = e;
+                    // Call pending handler with result
+                    if (pendingHandler != null) {
+                      (pendingHandler as FileMessageHandler)(message, e);
+                      failedMessage.pendingHandler = null;
+                    }
                     completer.complete();
                   },
                 );
@@ -75,6 +88,12 @@ class AutoResendManager {
                   handler:
                       (MultipleFilesMessage message, SendbirdException? e) {
                     exception = e;
+                    // Call pending handler with result
+                    if (pendingHandler != null) {
+                      (pendingHandler as MultipleFilesMessageHandler)(
+                          message, e);
+                      failedMessage.pendingHandler = null;
+                    }
                     completer.complete();
                   },
                 );

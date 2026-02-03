@@ -93,6 +93,11 @@ class BaseMessage extends RootMessage {
   /// The error code of them message if the [sendingStatus] is [SendingStatus.failed].
   int? errorCode;
 
+  /// The pending handler for auto resend.
+  /// This handler will be called after auto resend attempt.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Function? pendingHandler;
+
   /// Whether the message was sent from an operator.
   /// This value is true if the sender of this message was an operator at the moment this message was sent.
   /// Note that [Sender.role] returns the role of the sender at the current moment (when
@@ -252,6 +257,7 @@ class BaseMessage extends RootMessage {
         errorCode == SendbirdError.webSocketConnectionClosed ||
         errorCode == SendbirdError.webSocketConnectionFailed ||
         errorCode == SendbirdError.requestFailed || // Check
+        errorCode == SendbirdError.ackTimeout ||
         errorCode == SendbirdError.socketChannelFrozen) {
       return true;
     }
