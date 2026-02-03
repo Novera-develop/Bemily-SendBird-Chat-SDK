@@ -9,7 +9,7 @@ import 'package:sendbird_chat_sdk/src/internal/main/chat/chat.dart';
 import '../logger/sendbird_logger.dart';
 
 class FileCacheManager {
-  static const String _folderName = 'sendbird_chat_file_cache';
+  static const String _folderNamePrefix = 'sendbird_chat_file_cache';
 
   final Chat _chat;
   int retentionMinutes = 3 * 24 * 60; // 3 days
@@ -20,9 +20,14 @@ class FileCacheManager {
     return Platform.isIOS && _chat.chatContext.options.useCollectionCaching;
   }
 
+  /// Get folder name with appId to support multi-instance
+  String _getFolderName() {
+    return '${_folderNamePrefix}_${_chat.chatContext.appId}';
+  }
+
   Future<Directory> _getCacheDir() async {
     final appSupportDir = await getApplicationSupportDirectory();
-    final cacheDir = Directory('${appSupportDir.path}/$_folderName');
+    final cacheDir = Directory('${appSupportDir.path}/${_getFolderName()}');
     if (!cacheDir.existsSync()) {
       cacheDir.createSync();
     }

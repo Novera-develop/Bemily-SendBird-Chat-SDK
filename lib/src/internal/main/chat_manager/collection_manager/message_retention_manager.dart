@@ -17,23 +17,44 @@ class MessageRetentionManager {
   factory MessageRetentionManager() => _instance;
 
   final String _configTsKeyPrefix = 'com.sendbird.chat.config_ts';
-  int? applicationSettingsLimit;
-  int latestPaginationCount = 0;
+
+  /// Application settings limit per appId to support multi-instance
+  final Map<String, int?> _applicationSettingsLimitMap = {};
+
+  /// Latest pagination count per appId to support multi-instance
+  final Map<String, int> _latestPaginationCountMap = {};
 
   /// Get config_ts key for specific appId to support multi-instance
   String _getConfigTsKey(String appId) {
     return '${_configTsKeyPrefix}_$appId';
   }
 
+  /// Set application settings limit for specific appId
+  void setApplicationSettingsLimit(String appId, int? limit) {
+    _applicationSettingsLimitMap[appId] = limit;
+  }
+
+  /// Get application settings limit for specific appId
+  int? getApplicationSettingsLimit(String appId) {
+    return _applicationSettingsLimitMap[appId];
+  }
+
+  /// Get latest pagination count for specific appId
+  int getLatestPaginationCount(String appId) {
+    return _latestPaginationCountMap[appId] ?? 0;
+  }
+
   void checkApplicationSettings(Chat chat) async {
     sbLog.i(StackTrace.current, 'Started');
 
+    final appId = chat.chatContext.appId;
+
     try {
-      int? lastConfigTs = await getConfigTs(chat.chatContext.appId);
+      int? lastConfigTs = await getConfigTs(appId);
       String? token;
       ApplicationSettings settings;
 
-      latestPaginationCount = 0;
+      _latestPaginationCountMap[appId] = 0;
 
       do {
         if (lastConfigTs != null && token == null) {
@@ -45,12 +66,14 @@ class MessageRetentionManager {
           chat,
           ts: token == null ? lastConfigTs : null,
           token: token,
-          limit: applicationSettingsLimit,
+          limit: _applicationSettingsLimitMap[appId],
         );
 
+        _latestPaginationCountMap[appId] =
+            (_latestPaginationCountMap[appId] ?? 0) + 1;
         sbLog.d(
             StackTrace.current,
-            '\n[paginationCount] ${++latestPaginationCount}'
+            '\n[paginationCount] ${_latestPaginationCountMap[appId]}'
             '\n[settings] ${jsonEncoder.convert(settings.configs)}'
             '\n[hasMore] ${settings.hasMore}'
             '\n[token]: ${settings.next}'
