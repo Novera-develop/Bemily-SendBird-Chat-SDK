@@ -136,7 +136,7 @@ class EventManager {
 
   // BaseChannelHandler
   void notifyMessageReceived(BaseChannel channel, RootMessage message) {
-    sbLog.e(StackTrace.current,
+    sbLog.i(StackTrace.current,
         '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
 
     for (final e in _channelHandlers.values) {
