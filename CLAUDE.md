@@ -218,6 +218,16 @@ To support Apple's privacy manifest requirements, add the contents of `ios/Resou
 | `chat_auth.dart` | `getConfigTs(appId)` 호출 |
 | `collection_manager.dart` | `stopAutoResend(_chat)` 호출 |
 | `connection_manager.dart` | `clearConfigTs(appId)`, `cleanUp(chatId)` 호출 |
+| `command_manager.dart` | 연결 대기 큐 로직 추가 |
+| `base_message.dart` | `pendingHandler` 필드, `isAutoResendable()` 메서드 추가 |
+| `base_channel_message.dart` | Auto resend 핸들러 저장 로직 추가 |
+| `group_channel_message.dart` | Auto resend 핸들러 저장 로직 추가 |
+| `db_manager.dart` | appId 기반 DB 이름, 버전 키 생성 |
+| `device_token_manager.dart` | appId 기반 SharedPreferences 키 생성 |
+| `session_manager.dart` | appId 기반 SharedPreferences 키 생성 |
+| `file_cache_manager.dart` | appId 기반 캐시 폴더 이름 생성 |
+| `daily_record_stat_prefs.dart` | appId 기반 키 프리픽스 생성 |
+| `default_stat_prefs.dart` | appId 기반 SharedPreferences 키 생성 |
 
 ---
 
@@ -1522,4 +1532,574 @@ class SendbirdChat {
     );
   }
 }
+```
+
+---
+
+### 파일 7: command_manager.dart
+
+**경로**: `lib/src/internal/main/chat_manager/command_manager.dart`
+
+**수정 1** - 클래스 필드 추가 (기존 필드들 뒤에):
+
+찾기:
+```dart
+  final Map<String, int> _dedupIdMap = {};
+
+  int? logiTs;
+```
+
+교체:
+```dart
+  final Map<String, int> _dedupIdMap = {};
+
+  // Queue for ensuring message order during connection wait
+  final List<Completer<void>> _connectionWaitQueue = [];
+  bool _isProcessingConnectionWait = false;
+
+  int? logiTs;
+```
+
+**수정 2** - `_waitForConnectionWithQueue` 메서드 추가 (`getDedupIdListCount` 메서드 뒤에):
+
+찾기:
+```dart
+  int getDedupIdListCount() {
+    return _dedupIdMap.length;
+  }
+
+  Future<Command?> sendCommand(Command cmd) async {
+```
+
+교체:
+```dart
+  int getDedupIdListCount() {
+    return _dedupIdMap.length;
+  }
+
+  /// Waits for connection with queue to ensure message order
+  Future<void> _waitForConnectionWithQueue() async {
+    // Add to queue and wait for turn
+    final myCompleter = Completer<void>();
+    _connectionWaitQueue.add(myCompleter);
+    final queuePosition = _connectionWaitQueue.length;
+    sbLog.i(StackTrace.current,
+        'Added to connection wait queue (position: $queuePosition)');
+
+    // If another message is already processing connection wait, wait for our turn
+    if (_isProcessingConnectionWait) {
+      sbLog.i(StackTrace.current, 'Waiting for turn in queue...');
+      await myCompleter.future;
+      return;
+    }
+
+    // We are first in queue, process connection wait
+    _isProcessingConnectionWait = true;
+
+    try {
+      await _doWaitForConnection();
+
+      // Connection successful, release all waiting messages in order
+      sbLog.i(StackTrace.current,
+          'Connection established, releasing ${_connectionWaitQueue.length} queued messages');
+      while (_connectionWaitQueue.isNotEmpty) {
+        final completer = _connectionWaitQueue.removeAt(0);
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
+        // Small delay to ensure order is maintained
+        await Future.delayed(const Duration(milliseconds: 1));
+      }
+    } catch (e) {
+      // Connection failed, fail all waiting messages
+      sbLog.e(StackTrace.current,
+          'Connection failed, failing ${_connectionWaitQueue.length} queued messages');
+      while (_connectionWaitQueue.isNotEmpty) {
+        final completer = _connectionWaitQueue.removeAt(0);
+        if (!completer.isCompleted) {
+          completer.completeError(e);
+        }
+      }
+      rethrow;
+    } finally {
+      _isProcessingConnectionWait = false;
+    }
+  }
+
+  /// Internal method to wait for connection with retry logic
+  Future<void> _doWaitForConnection() async {
+    const maxRetryCount = 5;
+    var retryCount = 0;
+
+    while (!_chat.connectionManager.isConnected() ||
+        !_chat.connectionManager.webSocketClient.isConnected()) {
+      sbLog.i(StackTrace.current,
+          'WebSocket not connected (retry: $retryCount). isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}, isDisconnected: ${_chat.connectionManager.isDisconnected()}, isReconnecting: ${_chat.connectionManager.isReconnecting()}');
+
+      // Try to reconnect if:
+      // 1. Disconnected state, OR
+      // 2. WebSocket is not connected (even if state is Reconnecting, WS might have failed)
+      final shouldReconnect = _chat.connectionManager.isDisconnected() ||
+          (!_chat.connectionManager.webSocketClient.isConnected() &&
+              !_chat.connectionManager.isConnecting());
+
+      if (shouldReconnect) {
+        sbLog.i(StackTrace.current, 'Attempting auto reconnect...');
+        final reconnectStarted =
+            await _chat.connectionManager.reconnect(reset: true);
+        if (!reconnectStarted) {
+          sbLog.e(StackTrace.current, 'Failed to start reconnect');
+          throw ConnectionRequiredException();
+        }
+      }
+
+      // Wait for connect/reconnect to complete
+      if ((_chat.connectionManager.isReconnecting() ||
+              _chat.connectionManager.isConnecting()) &&
+          _chat.chatContext.loginCompleter != null &&
+          !_chat.chatContext.loginCompleter!.isCompleted) {
+        sbLog.i(StackTrace.current, 'Waiting for connection to complete...');
+        try {
+          await _chat.chatContext.loginCompleter!.future.timeout(
+            Duration(seconds: _chat.chatContext.options.connectionTimeout),
+            onTimeout: () {
+              throw ConnectionRequiredException();
+            },
+          );
+          sbLog.i(
+              StackTrace.current, 'Reconnect completed, proceeding with send');
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'Reconnect failed: $e');
+          throw ConnectionRequiredException();
+        }
+      }
+
+      // WebSocket is connected but state is not ConnectedState yet (waiting for LOGI)
+      // Wait with polling until connected or timeout
+      if (!_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        sbLog.i(StackTrace.current,
+            'WebSocket connected but waiting for LOGI, polling...');
+        const maxWaitMs = 5000;
+        const pollIntervalMs = 100;
+        var waitedMs = 0;
+        while (!_chat.connectionManager.isConnected() &&
+            _chat.connectionManager.webSocketClient.isConnected() &&
+            waitedMs < maxWaitMs) {
+          await Future.delayed(const Duration(milliseconds: pollIntervalMs));
+          waitedMs += pollIntervalMs;
+        }
+
+        if (_chat.connectionManager.isConnected()) {
+          sbLog.i(StackTrace.current,
+              'Connection state updated to connected after ${waitedMs}ms');
+        }
+
+        // 타임아웃 후에도 상태 불일치가 지속되면 재연결
+        if (!_chat.connectionManager.isConnected() &&
+            _chat.connectionManager.webSocketClient.isConnected()) {
+          sbLog.w(StackTrace.current,
+              'State mismatch persisted after ${waitedMs}ms, forcing reconnect...');
+          try {
+            await _chat.connectionManager.webSocketClient.close(
+              reason: 'State mismatch timeout',
+            );
+          } catch (e) {
+            sbLog.e(StackTrace.current, 'WebSocket disconnect failed: $e');
+          }
+          // 다음 iteration에서 reconnect 로직 처리
+        }
+      }
+
+      // Check if connected now
+      if (_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        break;
+      }
+
+      // Retry if not connected
+      retryCount++;
+      if (retryCount >= maxRetryCount) {
+        sbLog.e(StackTrace.current,
+            'Still not connected after $retryCount retries. isConnected: ${_chat.connectionManager.isConnected()}, wsConnected: ${_chat.connectionManager.webSocketClient.isConnected()}');
+        throw ConnectionRequiredException();
+      }
+
+      sbLog.i(StackTrace.current,
+          'Connection lost during wait, retrying... ($retryCount/$maxRetryCount)');
+    }
+  }
+
+  Future<Command?> sendCommand(Command cmd) async {
+```
+
+**수정 3** - `sendCommand` 메서드 시작 부분에 연결 체크 추가:
+
+찾기:
+```dart
+  Future<Command?> sendCommand(Command cmd) async {
+    if (_chat.chatContext.currentUser == null) {
+      // NOTE: some test cases execute async socket data
+      throw ConnectionRequiredException();
+    }
+
+    sbLog.d(
+```
+
+교체:
+```dart
+  Future<Command?> sendCommand(Command cmd) async {
+    if (_chat.chatContext.currentUser == null) {
+      // NOTE: some test cases execute async socket data
+      throw ConnectionRequiredException();
+    }
+
+    // Check if WebSocket is actually connected, wait for reconnect if needed
+    if (!_chat.connectionManager.isConnected() ||
+        !_chat.connectionManager.webSocketClient.isConnected()) {
+      await _waitForConnectionWithQueue();
+    }
+
+    sbLog.d(
+```
+
+---
+
+### 파일 8: base_message.dart
+
+**경로**: `lib/src/public/core/message/base_message.dart`
+
+**수정 1** - `pendingHandler` 필드 추가 (errorCode 필드 뒤에):
+
+찾기:
+```dart
+  /// The error code of them message if the [sendingStatus] is [SendingStatus.failed].
+  int? errorCode;
+
+  /// Whether the message was sent from an operator.
+```
+
+교체:
+```dart
+  /// The error code of them message if the [sendingStatus] is [SendingStatus.failed].
+  int? errorCode;
+
+  /// The pending handler for auto resend.
+  /// This handler will be called after auto resend attempt.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  Function? pendingHandler;
+
+  /// Whether the message was sent from an operator.
+```
+
+**수정 2** - `isAutoResendable()` 메서드 추가 (`isResendable()` 메서드 뒤에):
+
+찾기:
+```dart
+    sbLog.i(StackTrace.current, 'return: $result');
+    return result;
+  }
+
+  /// Returns [MessageMetaArray] list which is filtered by given metaArrayKeys.
+```
+
+교체:
+```dart
+    sbLog.i(StackTrace.current, 'return: $result');
+    return result;
+  }
+
+  bool isAutoResendable() {
+    // if (this is MultipleFilesMessage) { // Check
+    //   return false;
+    // }
+
+    if (errorCode == SendbirdError.connectionRequired ||
+        errorCode == SendbirdError.webSocketConnectionClosed ||
+        errorCode == SendbirdError.webSocketConnectionFailed ||
+        errorCode == SendbirdError.requestFailed || // Check
+        errorCode == SendbirdError.ackTimeout ||
+        errorCode == SendbirdError.socketChannelFrozen) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Returns [MessageMetaArray] list which is filtered by given metaArrayKeys.
+```
+
+---
+
+### 파일 9: base_channel_message.dart
+
+**경로**: `lib/src/public/core/channel/base_channel/base_channel_message.dart`
+
+**수정 1** - `sendUserMessage` 에러 핸들러 수정:
+
+찾기:
+```dart
+        if (handler != null) {
+          handler(pendingUserMessage, e);
+        }
+      }
+    });
+
+    return pendingUserMessage;
+  }
+
+  /// Resends a failed user message.
+```
+
+교체:
+```dart
+        if (handler != null) {
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingUserMessage.isAutoResendable()) {
+            pendingUserMessage.pendingHandler = handler;
+          } else {
+            handler(pendingUserMessage, e);
+          }
+        }
+      }
+    });
+
+    return pendingUserMessage;
+  }
+
+  /// Resends a failed user message.
+```
+
+**수정 2** - `sendFileMessage` 에러 핸들러 수정:
+
+찾기:
+```dart
+        if (handler != null) {
+          handler(pendingFileMessage, e);
+        }
+      }
+    });
+
+    return pendingFileMessage;
+  }
+
+  /// Cancels an ongoing `FileMessage` upload.
+```
+
+교체:
+```dart
+        if (handler != null) {
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingFileMessage.isAutoResendable()) {
+            pendingFileMessage.pendingHandler = handler;
+          } else {
+            handler(pendingFileMessage, e);
+          }
+        }
+      }
+    });
+
+    return pendingFileMessage;
+  }
+
+  /// Cancels an ongoing `FileMessage` upload.
+```
+
+---
+
+### 파일 10: group_channel_message.dart
+
+**경로**: `lib/src/public/core/channel/group_channel/group_channel_message.dart`
+
+**수정** - `sendMultipleFilesMessage` 에러 핸들러 수정:
+
+찾기:
+```dart
+        if (handler != null) {
+          handler(pendingFileMessage, e);
+        }
+      }
+    });
+
+    return pendingFileMessage;
+  }
+
+  /// Resends multiple files with given file information.
+```
+
+교체:
+```dart
+        if (handler != null) {
+          // If auto resendable, save handler and don't call it now
+          // Handler will be called after auto resend attempt
+          if (chat.chatContext.options.useAutoResend &&
+              pendingFileMessage.isAutoResendable()) {
+            pendingFileMessage.pendingHandler = handler;
+          } else {
+            handler(pendingFileMessage, e);
+          }
+        }
+      }
+    });
+
+    return pendingFileMessage;
+  }
+
+  /// Resends multiple files with given file information.
+```
+
+---
+
+### 파일 11: db_manager.dart (확인용)
+
+**경로**: `lib/src/internal/main/chat_manager/db_manager.dart`
+
+**확인할 부분** - 생성자에서 appId 기반 DB 이름, 버전 키 생성:
+
+```dart
+class DBManager {
+  final int _dbVersion = 2;
+  late final String _dbName;
+  final int _maxDBFileSize = 256; // MB
+  late final String _dbVersionKey;
+
+  // ... 생략 ...
+
+  DBManager({required Chat chat}) : _chat = chat {
+    // Use appId to support multi-instance
+    final appId = chat.chatContext.appId;
+    _dbName = 'sendbird_chat_$appId';
+    _dbVersionKey = 'com.sendbird.chat.db_version_$appId';
+  }
+```
+
+---
+
+### 파일 12: device_token_manager.dart (확인용)
+
+**경로**: `lib/src/internal/main/chat_manager/device_token_manager.dart`
+
+**확인할 부분** - 생성자에서 appId 기반 SharedPreferences 키 생성:
+
+```dart
+class DeviceTokenManager {
+  late final String prefDeviceTokenList;
+  late final String prefDeviceTokenLastDeletedAt;
+
+  final String _appId;
+
+  DeviceTokenManager({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    prefDeviceTokenList = 'com.sendbird.chat.device_token_list_$appId';
+    prefDeviceTokenLastDeletedAt =
+        'com.sendbird.chat.device_token_last_deleted_at_$appId';
+  }
+```
+
+---
+
+### 파일 13: session_manager.dart (확인용)
+
+**경로**: `lib/src/internal/main/chat_manager/session_manager.dart`
+
+**확인할 부분** - 생성자에서 appId 기반 SharedPreferences 키 생성:
+
+```dart
+class SessionManager {
+  late String _userIdKeyPath;
+  late String _sessionKeyPath;
+
+  // ... 생략 ...
+
+  SessionManager({required Chat chat}) : _chat = chat {
+    // Use appId to support multi-instance
+    final appId = chat.chatContext.appId;
+    _userIdKeyPath = 'com.sendbird.chat.user_id_$appId';
+    _sessionKeyPath = 'com.sendbird.chat.session_key_$appId';
+    accessTokenRequester = _AccessTokenRequesterImpl(sessionManager: this);
+  }
+```
+
+---
+
+### 파일 14: file_cache_manager.dart (확인용)
+
+**경로**: `lib/src/internal/main/chat_manager/file_cache_manager.dart`
+
+**확인할 부분** - `_getFolderName()`에서 appId 기반 캐시 폴더 이름 생성:
+
+```dart
+class FileCacheManager {
+  static const String _folderNamePrefix = 'sendbird_chat_file_cache';
+
+  final Chat _chat;
+  int retentionMinutes = 3 * 24 * 60; // 3 days
+
+  FileCacheManager({required Chat chat}) : _chat = chat;
+
+  // ... 생략 ...
+
+  /// Get folder name with appId to support multi-instance
+  String _getFolderName() {
+    return '${_folderNamePrefix}_${_chat.chatContext.appId}';
+  }
+```
+
+---
+
+### 파일 15: daily_record_stat_prefs.dart (확인용)
+
+**경로**: `lib/src/internal/main/stats/daily_record_stat_prefs.dart`
+
+**확인할 부분** - 생성자에서 appId 기반 키 프리픽스 생성:
+
+```dart
+class DailyRecordStatPrefs {
+  final deleted = 'deleted';
+  late final String _keyPrefix;
+
+  final String _appId;
+
+  DailyRecordStatPrefs({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    _keyPrefix = '${DailyRecordStat.keyPrefix}_$appId';
+  }
+
+  // ... 생략 ...
+
+  /// Get key with appId prefix for multi-instance support
+  String _getKey(DailyRecordStat stat) {
+    return '${_appId}_${stat.key}';
+  }
+```
+
+---
+
+### 파일 16: default_stat_prefs.dart (확인용)
+
+**경로**: `lib/src/internal/main/stats/default_stat_prefs.dart`
+
+**확인할 부분** - 생성자에서 appId 기반 SharedPreferences 키 생성:
+
+```dart
+class DefaultStatPrefs {
+  late final String prefDefaultStats;
+  late final String prefDefaultStatsCount;
+  late final String prefDefaultStatsLastSentAt;
+  late final String prefDefaultStatsDeviceId;
+
+  final String _appId;
+
+  DefaultStatPrefs({required String appId}) : _appId = appId {
+    // Use appId to support multi-instance
+    prefDefaultStats = 'com.sendbird.chat.default_stats_$appId';
+    prefDefaultStatsCount = 'com.sendbird.chat.default_stats_count_$appId';
+    prefDefaultStatsLastSentAt =
+        'com.sendbird.chat.default_stats_last_sent_at_$appId';
+    prefDefaultStatsDeviceId =
+        'com.sendbird.chat.default_stats_device_id_$appId';
+  }
 ```
