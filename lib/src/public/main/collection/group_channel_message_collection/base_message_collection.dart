@@ -993,6 +993,10 @@ abstract class BaseMessageCollection {
     } else if (eventSource == CollectionEventSource.eventReactionUpdated) {
       // Check updatedAt (?)
       canUpdate = true;
+    } else if (eventSource == CollectionEventSource.messageChangeLogs) {
+      // Reaction updates from message change logs (e.g., after reconnect)
+      // don't change updatedAt, so we need to allow updates here.
+      canUpdate = true;
     } else if (eventSource == CollectionEventSource.eventThreadInfoUpdated) {
       // Check updatedAt (?)
       canUpdate = true;
