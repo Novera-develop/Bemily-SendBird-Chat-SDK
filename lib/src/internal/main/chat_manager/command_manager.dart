@@ -1111,6 +1111,9 @@ class CommandManager {
   Future<void> _processSystemEvent(Command cmd) async {
     final event = ChannelEvent.fromJsonWithChat(_chat, cmd.payload);
 
+    sbLog.e(StackTrace.current,
+        '[SYEV] cat: ${cmd.payload['cat']}, category: ${event.category}, channelUrl: ${event.channelUrl}');
+
     switch (event.category) {
       case ChannelEventCategory.typingStart:
         await _processTyping(event, true);
