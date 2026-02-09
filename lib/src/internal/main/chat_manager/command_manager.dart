@@ -1609,22 +1609,51 @@ class CommandManager {
 
   Future<void> _processMemberInfoUpdated(ChannelEvent event) async {
     try {
-      final channel = await BaseChannel.getBaseChannel(
-        event.channelType,
-        event.channelUrl,
-        chat: _chat,
-      );
+      sbLog.e(StackTrace.current,
+          'channelUrl: ${event.channelUrl}, data: ${event.data}');
 
-      final GroupChannel? groupChannel = _eitherGroupOrFeed(channel);
+      // Parse updated users from event data
+      final List<User> updatedUsers = [];
+
+      if (event.data['users'] != null) {
+        final usersList = event.data['users'] as List;
+        for (final userData in usersList) {
+          updatedUsers.add(User.fromJsonWithChat(
+              _chat, Map<String, dynamic>.from(userData)));
+        }
+      } else if (event.data['user_id'] != null) {
+        updatedUsers.add(User.fromJsonWithChat(_chat, event.data));
+      }
+
+      if (updatedUsers.isEmpty) {
+        sbLog.e(StackTrace.current,
+            'No updated users found in event data: ${event.data}');
+        return;
+      }
+
+      sbLog.e(StackTrace.current,
+          '_processMemberInfoUpdated: ${updatedUsers.length}');
+      // Use cached channel directly to keep the same object reference
+      // as the one in GroupChannelCollection.channelList
+      GroupChannel? groupChannel =
+          _chat.channelCache.find<GroupChannel>(channelKey: event.channelUrl);
+
+      if (groupChannel == null) {
+        final channel = await BaseChannel.getBaseChannel(
+          event.channelType,
+          event.channelUrl,
+          chat: _chat,
+        );
+        groupChannel = _eitherGroupOrFeed(channel);
+      }
+
       if (groupChannel != null) {
-        // Update member info from event data
-        final updatedMembers = event.joinedMembers;
-        for (final updatedMember in updatedMembers) {
-          groupChannel.updateMember(updatedMember);
+        for (final updatedUser in updatedUsers) {
+          groupChannel.updateMember(updatedUser);
         }
 
         groupChannel.saveToCache(_chat);
-        _chat.eventManager.notifyChannelChanged(channel);
+        _chat.eventManager.notifyChannelChanged(groupChannel);
       }
     } catch (e) {
       sbLog.e(StackTrace.current, 'eventCategory: ${event.category}, e: $e');
