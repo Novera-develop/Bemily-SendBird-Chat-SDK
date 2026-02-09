@@ -43,6 +43,7 @@ enum CollectionEventSource {
   eventChannelHidden(true), // onChannelUpdated()
   eventChannelMemberCountChanged(true), // onChannelsUpdated()
   eventPinnedMessageUpdated(true), // onChannelUpdated()
+  eventMemberInfoUpdated(true), // onChannelUpdated()
 
   // Message (isFromEvent = false)
   messageCacheInitialize(false), // initialize()

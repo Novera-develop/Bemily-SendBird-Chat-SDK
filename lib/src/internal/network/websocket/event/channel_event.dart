@@ -129,6 +129,8 @@ ChannelEventCategory channelEventValueOf(int value) {
       return ChannelEventCategory.leave;
     case 10002:
       return ChannelEventCategory.updateOperators;
+    case 10003:
+      return ChannelEventCategory.memberInfoUpdated;
     case 10020:
       return ChannelEventCategory.invite;
     case 10022:
@@ -177,6 +179,7 @@ enum ChannelEventCategory {
   join,
   leave,
   updateOperators,
+  memberInfoUpdated,
   invite,
   declineInvite,
   enter,

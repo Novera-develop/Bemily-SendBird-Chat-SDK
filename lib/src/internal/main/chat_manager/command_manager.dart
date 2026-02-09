@@ -1175,6 +1175,9 @@ class CommandManager {
       case ChannelEventCategory.updateOperators:
         await _processChannelOperators(event);
         break;
+      case ChannelEventCategory.memberInfoUpdated:
+        await _processMemberInfoUpdated(event);
+        break;
       case ChannelEventCategory.pinnedMessage:
         await _processChannelPinnedMessage(event);
         break;
@@ -1599,6 +1602,30 @@ class CommandManager {
       }
 
       _chat.eventManager.notifyOperatorUpdated(channel);
+    } catch (e) {
+      sbLog.e(StackTrace.current, 'eventCategory: ${event.category}, e: $e');
+    }
+  }
+
+  Future<void> _processMemberInfoUpdated(ChannelEvent event) async {
+    try {
+      final channel = await BaseChannel.getBaseChannel(
+        event.channelType,
+        event.channelUrl,
+        chat: _chat,
+      );
+
+      final GroupChannel? groupChannel = _eitherGroupOrFeed(channel);
+      if (groupChannel != null) {
+        // Update member info from event data
+        final updatedMembers = event.joinedMembers;
+        for (final updatedMember in updatedMembers) {
+          groupChannel.updateMember(updatedMember);
+        }
+
+        groupChannel.saveToCache(_chat);
+        _chat.eventManager.notifyChannelChanged(channel);
+      }
     } catch (e) {
       sbLog.e(StackTrace.current, 'eventCategory: ${event.category}, e: $e');
     }
