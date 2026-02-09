@@ -312,6 +312,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventChannelChanged,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventChannelChanged,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -319,6 +324,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onChannelDeleted(String channelUrl, ChannelType channelType) {
     if (channelType == ChannelType.group) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventChannelDeleted,
+        deletedChannelUrls: [channelUrl],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventChannelDeleted,
         deletedChannelUrls: [channelUrl],
       );
@@ -332,6 +342,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventUserMuted,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventUserMuted,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -339,6 +354,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onUserUnmuted(BaseChannel channel, User user) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventUserUnmuted,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventUserUnmuted,
         updatedChannels: [channel],
       );
@@ -353,8 +373,18 @@ class InternalGroupChannelHandlerForCollectionManager
           eventSource: CollectionEventSource.eventUserBanned,
           deletedChannelUrls: [channel.channelUrl],
         );
+
+        _collectionManager.sendEventsToMessageCollectionList(
+          eventSource: CollectionEventSource.eventUserBanned,
+          deletedChannelUrls: [channel.channelUrl],
+        );
       } else {
         _collectionManager.sendEventsToGroupChannelCollectionList(
+          eventSource: CollectionEventSource.eventUserBanned,
+          updatedChannels: [channel],
+        );
+
+        _collectionManager.sendEventsToMessageCollectionList(
           eventSource: CollectionEventSource.eventUserBanned,
           updatedChannels: [channel],
         );
@@ -369,6 +399,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventUserUnbanned,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventUserUnbanned,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -376,6 +411,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onChannelFrozen(BaseChannel channel) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventChannelFrozen,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventChannelFrozen,
         updatedChannels: [channel],
       );
@@ -389,6 +429,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventChannelUnfrozen,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventChannelUnfrozen,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -396,6 +441,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onMetaDataCreated(BaseChannel channel, Map<String, String> metaData) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaDataCreated,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventChannelMetaDataCreated,
         updatedChannels: [channel],
       );
@@ -409,6 +459,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventChannelMetaDataUpdated,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaDataUpdated,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -416,6 +471,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onMetaDataDeleted(BaseChannel channel, List<String> metaDataKeys) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaDataDeleted,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventChannelMetaDataDeleted,
         updatedChannels: [channel],
       );
@@ -430,6 +490,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventChannelMetaCountersCreated,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaCountersCreated,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -438,6 +503,11 @@ class InternalGroupChannelHandlerForCollectionManager
       BaseChannel channel, Map<String, int> metaCounters) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaCountersUpdated,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventChannelMetaCountersUpdated,
         updatedChannels: [channel],
       );
@@ -452,6 +522,11 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventChannelMetaCountersDeleted,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventChannelMetaCountersDeleted,
+        updatedChannels: [channel],
+      );
     }
   }
 
@@ -459,6 +534,11 @@ class InternalGroupChannelHandlerForCollectionManager
   void onOperatorUpdated(BaseChannel channel) {
     if (channel is GroupChannel) {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventOperatorUpdated,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventOperatorUpdated,
         updatedChannels: [channel],
       );
@@ -595,11 +675,22 @@ class InternalGroupChannelHandlerForCollectionManager
       eventSource: CollectionEventSource.eventReadStatusUpdated,
       updatedChannels: [channel],
     );
+
+    _collectionManager.sendEventsToMessageCollectionList(
+      eventSource: CollectionEventSource.eventReadStatusUpdated,
+      updatedChannels: [channel],
+    );
   }
 
   @override
   void onUserMarkedRead(GroupChannel channel, List<String> userIds) {
     _collectionManager.sendEventsToGroupChannelCollectionList(
+      eventSource: CollectionEventSource.eventUserMarkedRead,
+      updatedChannels: [channel],
+      eventDetail: userIds,
+    );
+
+    _collectionManager.sendEventsToMessageCollectionList(
       eventSource: CollectionEventSource.eventUserMarkedRead,
       updatedChannels: [channel],
       eventDetail: userIds,
@@ -613,11 +704,22 @@ class InternalGroupChannelHandlerForCollectionManager
       updatedChannels: [channel],
       eventDetail: userIds,
     );
+
+    _collectionManager.sendEventsToMessageCollectionList(
+      eventSource: CollectionEventSource.eventUserMarkedUnread,
+      updatedChannels: [channel],
+      eventDetail: userIds,
+    );
   }
 
   @override
   void onDeliveryStatusUpdated(GroupChannel channel) {
     _collectionManager.sendEventsToGroupChannelCollectionList(
+      eventSource: CollectionEventSource.eventDeliveryStatusUpdated,
+      updatedChannels: [channel],
+    );
+
+    _collectionManager.sendEventsToMessageCollectionList(
       eventSource: CollectionEventSource.eventDeliveryStatusUpdated,
       updatedChannels: [channel],
     );
@@ -629,12 +731,22 @@ class InternalGroupChannelHandlerForCollectionManager
       eventSource: CollectionEventSource.eventTypingStatusUpdated,
       updatedChannels: [channel],
     );
+
+    _collectionManager.sendEventsToMessageCollectionList(
+      eventSource: CollectionEventSource.eventTypingStatusUpdated,
+      updatedChannels: [channel],
+    );
   }
 
   @override
   void onUserReceivedInvitation(
       GroupChannel channel, List<User> invitees, User? inviter) {
     _collectionManager.sendEventsToGroupChannelCollectionList(
+      eventSource: CollectionEventSource.eventUserReceivedInvitation,
+      updatedChannels: [channel],
+    );
+
+    _collectionManager.sendEventsToMessageCollectionList(
       eventSource: CollectionEventSource.eventUserReceivedInvitation,
       updatedChannels: [channel],
     );
@@ -648,8 +760,18 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventUserDeclinedInvitation,
         deletedChannelUrls: [channel.channelUrl],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventUserDeclinedInvitation,
+        deletedChannelUrls: [channel.channelUrl],
+      );
     } else {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventUserDeclinedInvitation,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventUserDeclinedInvitation,
         updatedChannels: [channel],
       );
@@ -668,12 +790,22 @@ class InternalGroupChannelHandlerForCollectionManager
         eventSource: CollectionEventSource.eventUserJoined,
         updatedChannels: [channel],
       );
+
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventUserJoined,
+        updatedChannels: [channel],
+      );
     }
   }
 
   @override
   void onUserLeft(GroupChannel channel, User user) {
     if (user.isCurrentUser) {
+      _collectionManager.sendEventsToMessageCollectionList(
+        eventSource: CollectionEventSource.eventUserLeft,
+        deletedChannelUrls: [channel.channelUrl],
+      );
+
       _collectionManager.disposeMessageCollection(channel.channelUrl);
 
       _collectionManager.sendEventsToGroupChannelCollectionList(
@@ -682,6 +814,11 @@ class InternalGroupChannelHandlerForCollectionManager
       );
     } else {
       _collectionManager.sendEventsToGroupChannelCollectionList(
+        eventSource: CollectionEventSource.eventUserLeft,
+        updatedChannels: [channel],
+      );
+
+      _collectionManager.sendEventsToMessageCollectionList(
         eventSource: CollectionEventSource.eventUserLeft,
         updatedChannels: [channel],
       );
@@ -694,6 +831,11 @@ class InternalGroupChannelHandlerForCollectionManager
       eventSource: CollectionEventSource.eventChannelHidden,
       updatedChannels: [channel],
     );
+
+    _collectionManager.sendEventsToMessageCollectionList(
+      eventSource: CollectionEventSource.eventChannelHidden,
+      updatedChannels: [channel],
+    );
   }
 
   @override
@@ -702,11 +844,21 @@ class InternalGroupChannelHandlerForCollectionManager
       eventSource: CollectionEventSource.eventChannelMemberCountChanged,
       updatedChannels: channels,
     );
+
+    _collectionManager.sendEventsToMessageCollectionList(
+      eventSource: CollectionEventSource.eventChannelMemberCountChanged,
+      updatedChannels: channels,
+    );
   }
 
   @override
   void onPinnedMessageUpdated(GroupChannel channel) {
     _collectionManager.sendEventsToGroupChannelCollectionList(
+      eventSource: CollectionEventSource.eventPinnedMessageUpdated,
+      updatedChannels: [channel],
+    );
+
+    _collectionManager.sendEventsToMessageCollectionList(
       eventSource: CollectionEventSource.eventPinnedMessageUpdated,
       updatedChannels: [channel],
     );
