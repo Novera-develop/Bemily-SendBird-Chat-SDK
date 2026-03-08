@@ -150,38 +150,56 @@ class CommandManager {
     return _dedupIdMap.length;
   }
 
-  /// 재연결 중이면 loginCompleter 완료를 기다리고, 연결 불가 상태면 예외를 던진다.
-  /// 폴링 없이 Future를 직접 await하므로 불필요한 딜레이가 없다.
+  /// 연결이 복구될 때까지 대기한다.
+  /// - loginCompleter를 직접 await하므로 폴링이 없고 딜레이가 최소화된다.
+  /// - 재연결 시도가 실패하면 connectionTimeout 내에서 다음 시도를 기다린다.
+  /// - Disconnected 상태이면 즉시 throw한다.
   Future<void> _waitForConnection() async {
-    if (_chat.connectionManager.isConnected() &&
-        _chat.connectionManager.webSocketClient.isConnected()) {
-      return;
-    }
+    final deadline = DateTime.now().add(
+      Duration(seconds: _chat.chatContext.options.connectionTimeout),
+    );
 
-    final isReconnecting = _chat.connectionManager.isReconnecting() ||
-        _chat.connectionManager.isConnecting();
-    final loginCompleter = _chat.chatContext.loginCompleter;
-
-    if (isReconnecting &&
-        loginCompleter != null &&
-        !loginCompleter.isCompleted) {
-      sbLog.i(StackTrace.current, 'Waiting for reconnection to complete...');
-      try {
-        await loginCompleter.future.timeout(
-          Duration(seconds: _chat.chatContext.options.connectionTimeout),
-          onTimeout: () => throw ConnectionRequiredException(),
-        );
-        sbLog.i(StackTrace.current, 'Reconnection completed, proceeding');
-      } catch (e) {
-        sbLog.e(StackTrace.current, 'Reconnection failed: $e');
-        throw ConnectionRequiredException();
+    while (DateTime.now().isBefore(deadline)) {
+      // 이미 연결된 상태
+      if (_chat.connectionManager.isConnected() &&
+          _chat.connectionManager.webSocketClient.isConnected()) {
+        return;
       }
-    } else {
-      // Disconnected 상태이거나 loginCompleter가 없으면 바로 실패
-      sbLog.e(StackTrace.current,
-          'Not connected and not reconnecting, throwing ConnectionRequiredException');
-      throw ConnectionRequiredException();
+
+      // 명확히 끊긴 상태 (SDK가 재연결을 시도하지 않음)
+      if (_chat.connectionManager.isDisconnected()) {
+        break;
+      }
+
+      final loginCompleter = _chat.chatContext.loginCompleter;
+
+      if (loginCompleter != null && !loginCompleter.isCompleted) {
+        // 현재 진행 중인 재연결 시도를 기다린다
+        sbLog.i(StackTrace.current, 'Waiting for reconnection to complete...');
+        try {
+          final remaining = deadline.difference(DateTime.now());
+          await loginCompleter.future.timeout(
+            remaining.isNegative ? Duration.zero : remaining,
+            onTimeout: () => throw ConnectionRequiredException(),
+          );
+          sbLog.i(StackTrace.current, 'Reconnection completed, proceeding');
+          return;
+        } catch (e) {
+          sbLog.w(StackTrace.current,
+              'Reconnection attempt failed: $e, waiting for next attempt...');
+          // 다음 재연결 시도의 loginCompleter가 설정될 때까지 잠시 대기
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+      } else {
+        // loginCompleter가 아직 설정되지 않음 (상태 전이 중)
+        // 혹은 이미 완료된 상태 (다음 loginCompleter 대기)
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
     }
+
+    sbLog.e(StackTrace.current,
+        'Connection wait timed out or disconnected, throwing ConnectionRequiredException');
+    throw ConnectionRequiredException();
   }
 
   Future<Command?> sendCommand(Command cmd) async {
