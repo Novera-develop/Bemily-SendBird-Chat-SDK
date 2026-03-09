@@ -570,22 +570,28 @@ class ConnectionManager {
     if (commands.isEmpty) return;
 
     runZonedGuarded(() async {
-      for (final command in commands) {
-        try {
-          await chat.commandManager.processCommand(command);
-        } catch (e) {
-          sbLog.e(StackTrace.current, 'e: $e');
-          // Only fatal server-side errors (e.g. session revoked, auth failed)
-          // should abort reconnection. Non-fatal processing errors (e.g. a poll
-          // event whose channel fetch fails under load) must NOT propagate to
-          // the zone error handler, because that handler calls
-          // loginCompleter.completeError which permanently kills reconnection
-          // for ALL channels of the user.
-          if (e is WebSocketFailedException) {
-            rethrow;
+      // Process commands concurrently so that ACKs for messages sent by the
+      // local user are not delayed by a large batch of incoming messages.
+      // On iOS, WebSocket data is buffered more aggressively, meaning a batch
+      // can contain many incoming MESGs followed by the user's own ACK.
+      // Sequential processing would delay the ACK (and thus the UI update)
+      // until all prior commands finish — causing sent messages to pile up
+      // and appear all at once.
+      await Future.wait(
+        commands.map((command) async {
+          try {
+            await chat.commandManager.processCommand(command);
+          } catch (e) {
+            sbLog.e(StackTrace.current, 'e: $e');
+            // Only WebSocketFailedException (fatal server errors) should reach
+            // the zone error handler to abort reconnection.
+            if (e is WebSocketFailedException) {
+              rethrow;
+            }
           }
-        }
-      }
+        }),
+        eagerError: true,
+      );
     }, (e, s) {
       if (chat.chatContext.loginCompleter != null &&
           !chat.chatContext.loginCompleter!.isCompleted) {
