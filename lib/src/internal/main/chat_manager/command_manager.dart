@@ -153,7 +153,9 @@ class CommandManager {
   /// 연결이 복구될 때까지 대기한다.
   /// - loginCompleter를 직접 await하므로 폴링이 없고 딜레이가 최소화된다.
   /// - 재연결 시도가 실패하면 connectionTimeout 내에서 다음 시도를 기다린다.
-  /// - Disconnected 상태이면 즉시 throw한다.
+  /// - currentUser == null인 경우 (명시적 disconnect/logout)에만 즉시 throw한다.
+  /// - DisconnectedState는 재연결 과정의 순간적인 중간 상태일 수 있으므로
+  ///   isDisconnected() 만으로는 판단하지 않는다.
   Future<void> _waitForConnection() async {
     final deadline = DateTime.now().add(
       Duration(seconds: _chat.chatContext.options.connectionTimeout),
@@ -166,8 +168,9 @@ class CommandManager {
         return;
       }
 
-      // 명확히 끊긴 상태 (SDK가 재연결을 시도하지 않음)
-      if (_chat.connectionManager.isDisconnected()) {
+      // currentUser == null이면 명시적 disconnect/logout이므로 즉시 종료
+      // (네트워크 변경으로 인한 일시적 DisconnectedState는 여기서 걸리지 않음)
+      if (_chat.chatContext.currentUser == null) {
         break;
       }
 
@@ -198,7 +201,7 @@ class CommandManager {
     }
 
     sbLog.e(StackTrace.current,
-        'Connection wait timed out or disconnected, throwing ConnectionRequiredException');
+        'Connection wait timed out or user disconnected, throwing ConnectionRequiredException');
     throw ConnectionRequiredException();
   }
 
