@@ -175,7 +175,13 @@ extension GroupChannelMessage on GroupChannel {
 
             String? fileUrl = uploadResponse?.url;
             int? fileSize = uploadResponse?.fileSize;
-            if (fileUrl != null) fileInfo.fileUrl = fileUrl;
+            if (fileUrl != null) {
+              fileInfo.fileUrl = fileUrl;
+              // Clear binary data after upload so auto-resend uses the URL
+              // instead of re-uploading the file
+              fileInfo.file = null;
+              fileInfo.fileBytes = null;
+            }
             if (fileSize != null) fileInfo.fileSize = fileSize;
 
             requireAuthList.add(uploadResponse?.requireAuth);

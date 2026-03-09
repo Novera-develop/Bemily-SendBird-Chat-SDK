@@ -388,7 +388,13 @@ extension BaseChannelMessage on BaseChannel {
 
           String? fileUrl = uploadResponse?.url;
           int? fileSize = uploadResponse?.fileSize;
-          if (fileUrl != null) params.fileInfo.fileUrl = fileUrl;
+          if (fileUrl != null) {
+            params.fileInfo.fileUrl = fileUrl;
+            // Clear binary data after upload so auto-resend uses the URL
+            // instead of re-uploading the file (important for large files like videos)
+            params.fileInfo.file = null;
+            params.fileInfo.fileBytes = null;
+          }
           if (fileSize != null) params.fileInfo.fileSize = fileSize;
 
           final cmd = Command.buildFileMessage(
