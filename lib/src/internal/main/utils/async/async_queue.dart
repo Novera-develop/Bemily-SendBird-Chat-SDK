@@ -56,24 +56,38 @@ class AsyncQueue<T> {
 
       if (task is AsyncTask<T>) {
         dynamic res;
+        Object? caughtError;
+        StackTrace? caughtStack;
         try {
           res = await task.func(task.arg);
-        } catch (e) {
+        } catch (e, s) {
           sbLog.e(StackTrace.current, 'e: $e');
-          _isScheduled = false;
-          rethrow;
+          caughtError = e;
+          caughtStack = s;
         } finally {
           _completerMap.remove(task.hashCode)?.complete(res);
         }
+        // Report error to zone after completing the completer so the
+        // queue continues processing remaining tasks.
+        if (caughtError != null) {
+          Zone.current.handleUncaughtError(caughtError, caughtStack!);
+        }
       } else if (task is AsyncSimpleTask) {
+        Object? caughtError;
+        StackTrace? caughtStack;
         try {
           await task.func();
-        } catch (e) {
+        } catch (e, s) {
           sbLog.e(StackTrace.current, 'e: $e');
-          _isScheduled = false;
-          rethrow;
+          caughtError = e;
+          caughtStack = s;
         } finally {
           _completerMap.remove(task.hashCode)?.complete();
+        }
+        // Report error to zone after completing the completer so the
+        // queue continues processing remaining tasks.
+        if (caughtError != null) {
+          Zone.current.handleUncaughtError(caughtError, caughtStack!);
         }
       }
     }
@@ -87,5 +101,6 @@ class AsyncQueue<T> {
     }
     _operationQueue.removeWhere((element) => true);
     _currentOperation = null;
+    _isScheduled = false;
   }
 }

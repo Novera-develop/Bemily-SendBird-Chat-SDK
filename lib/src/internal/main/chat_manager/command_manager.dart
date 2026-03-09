@@ -674,10 +674,15 @@ class CommandManager {
             _chat.currentUser?.userId != event.sender?.userId) {
           final messageId = message.getMessageId();
           if (messageId is int) {
+            // Use catchError to prevent MACK failures from propagating to the
+            // zone error handler, which would abort an active loginCompleter
+            // and cause all message operations to become unresponsive.
             sendCommand(Command.buildMessageMACK(
               message.channelUrl,
               messageId,
-            ));
+            )).catchError((e) {
+              sbLog.w(StackTrace.current, 'MACK send failed (ignored): $e');
+            });
           }
         }
       }
@@ -1009,7 +1014,7 @@ class CommandManager {
   Future<void> _processSystemEvent(Command cmd) async {
     final event = ChannelEvent.fromJsonWithChat(_chat, cmd.payload);
 
-    sbLog.e(StackTrace.current,
+    sbLog.d(StackTrace.current,
         '[SYEV] cat: ${cmd.payload['cat']}, category: ${event.category}, channelUrl: ${event.channelUrl}');
 
     switch (event.category) {
