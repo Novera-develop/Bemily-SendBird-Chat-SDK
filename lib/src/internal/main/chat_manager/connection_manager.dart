@@ -570,13 +570,21 @@ class ConnectionManager {
     if (commands.isEmpty) return;
 
     runZonedGuarded(() async {
-      try {
-        for (final command in commands) {
+      for (final command in commands) {
+        try {
           await chat.commandManager.processCommand(command);
+        } catch (e) {
+          sbLog.e(StackTrace.current, 'e: $e');
+          // Only fatal server-side errors (e.g. session revoked, auth failed)
+          // should abort reconnection. Non-fatal processing errors (e.g. a poll
+          // event whose channel fetch fails under load) must NOT propagate to
+          // the zone error handler, because that handler calls
+          // loginCompleter.completeError which permanently kills reconnection
+          // for ALL channels of the user.
+          if (e is WebSocketFailedException) {
+            rethrow;
+          }
         }
-      } catch (e) {
-        sbLog.e(StackTrace.current, 'e: $e');
-        rethrow;
       }
     }, (e, s) {
       if (chat.chatContext.loginCompleter != null &&

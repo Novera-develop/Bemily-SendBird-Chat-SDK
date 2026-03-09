@@ -158,6 +158,9 @@ class Chat with WidgetsBindingObserver {
   final Map<String, AsyncQueue> messageQueueMap = {};
   final Map<String, AsyncSimpleTask> uploadTaskMap = {};
 
+  // Deduplicates concurrent channel fetch HTTP requests for the same channel
+  final Map<String, Future<dynamic>> pendingChannelFetches = {};
+
   AsyncQueue getMessageQueue(String channelUrl) =>
       messageQueueMap[channelUrl] ?? AsyncQueue();
 

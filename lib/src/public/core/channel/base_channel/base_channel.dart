@@ -223,13 +223,42 @@ class BaseChannel implements Cacheable {
     String channelUrl, {
     Chat? chat,
   }) async {
+    // Deduplicate concurrent fetches for the same channel when chat is provided
+    if (chat != null) {
+      final key = '${channelType.name}:$channelUrl';
+      final pending = chat.pendingChannelFetches[key];
+      if (pending != null) {
+        return (await pending) as BaseChannel;
+      }
+
+      Future<BaseChannel> future;
+      switch (channelType) {
+        case ChannelType.group:
+          future = GroupChannel.getChannel(channelUrl, chat: chat);
+          break;
+        case ChannelType.open:
+          future = OpenChannel.getChannel(channelUrl, chat: chat);
+          break;
+        case ChannelType.feed:
+          future = FeedChannel.getChannel(channelUrl, chat: chat);
+          break;
+      }
+
+      chat.pendingChannelFetches[key] = future;
+      try {
+        return await future;
+      } finally {
+        chat.pendingChannelFetches.remove(key);
+      }
+    }
+
     switch (channelType) {
       case ChannelType.group:
-        return GroupChannel.getChannel(channelUrl, chat: chat);
+        return GroupChannel.getChannel(channelUrl);
       case ChannelType.open:
-        return OpenChannel.getChannel(channelUrl, chat: chat);
+        return OpenChannel.getChannel(channelUrl);
       case ChannelType.feed:
-        return FeedChannel.getChannel(channelUrl, chat: chat);
+        return FeedChannel.getChannel(channelUrl);
     }
   }
 
