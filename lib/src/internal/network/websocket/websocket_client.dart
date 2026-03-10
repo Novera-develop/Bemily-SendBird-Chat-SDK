@@ -140,10 +140,15 @@ class WebSocketClient {
       }
 
       _url = url;
-      _isConnected = true;
+      // Do NOT set _isConnected = true here.
+      // On iOS, calling sink.add() before the TCP handshake completes causes
+      // SocketTimeoutException. We set _isConnected = true only after ready
+      // resolves, so any send() attempt before that fails with
+      // WebSocketFailedException (→ auto-resend) instead of crashing.
 
       _webSocketChannel?.ready.then((value) {
-        if (_isConnected) {
+        if (_url == url) {
+          _isConnected = true;
           connectedTs = DateTime.now().millisecondsSinceEpoch;
           reconnectTimeoutCompleter?.complete();
           _onWebSocketConnected();
