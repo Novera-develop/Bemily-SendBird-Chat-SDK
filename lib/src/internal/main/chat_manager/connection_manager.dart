@@ -626,6 +626,13 @@ class ConnectionManager {
   }
 
   Future<void> _onWebSocketError(Object e) async {
+    // Immediately fail pending ACK completers so messages go to auto-resend
+    // without waiting for the full ACK timeout (webSocketTimeout = 30s).
+    // This is especially important on iOS where the watchdog detects a dead
+    // socket via the error path (not the clean close path).
+    chat.commandManager.clearCompleterMap(
+      e: WebSocketFailedException(message: e.toString()),
+    );
     await _reconnectIfNeeded();
   }
 
