@@ -210,12 +210,6 @@ class CommandManager {
       throw ConnectionRequiredException();
     }
 
-    // 네트워크 변경 등으로 WebSocket 연결이 끊긴 경우 재연결 완료를 기다린다
-    if (!_chat.connectionManager.isConnected() ||
-        !_chat.connectionManager.webSocketClient.isConnected()) {
-      await _waitForConnection();
-    }
-
     sbLog.d(
         StackTrace.current, '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
 
