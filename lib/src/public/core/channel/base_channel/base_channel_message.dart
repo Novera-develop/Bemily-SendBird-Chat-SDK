@@ -330,6 +330,11 @@ extension BaseChannelMessage on BaseChannel {
     }
 
     bool isCanceled = false;
+    // Prevents double-invocation of handler/events when upload times out:
+    // timeout callback fires handler first, then the thrown exception propagates
+    // through AsyncQueue → Zone error handler → runZonedGuarded, which would
+    // otherwise call handler and sendEventsToMessageCollection a second time.
+    bool isHandled = false;
     runZonedGuarded(() async {
       final queue = chat.getMessageQueue(channelUrl);
       final task = AsyncSimpleTask(
@@ -347,6 +352,7 @@ extension BaseChannelMessage on BaseChannel {
                 .timeout(
               Duration(seconds: chat.chatContext.options.fileTransferTimeout),
               onTimeout: () {
+                isHandled = true;
                 pendingFileMessage
                   ..sendingStatus = SendingStatus.failed
                   ..messageId =
@@ -530,6 +536,8 @@ extension BaseChannelMessage on BaseChannel {
     }, (e, s) {
       sbLog.e(StackTrace.current, 'e: $e');
       if (isCanceled) return;
+      // Timeout already handled: handler + events were fired in onTimeout.
+      if (isHandled) return;
 
       if (e is SendbirdException) {
         pendingFileMessage

@@ -80,6 +80,9 @@ extension GroupChannelMessage on GroupChannel {
     }
 
     bool isCanceled = false;
+    // Prevents double-invocation of handlers/events when upload times out.
+    // See same pattern in base_channel_message.dart for details.
+    bool isHandled = false;
     int? currentUploadingIndex;
     runZonedGuarded(() async {
       final queue = chat.getMessageQueue(channelUrl);
@@ -117,6 +120,7 @@ extension GroupChannelMessage on GroupChannel {
                   .timeout(
                 Duration(seconds: chat.chatContext.options.fileTransferTimeout),
                 onTimeout: () {
+                  isHandled = true;
                   if (fileUploadHandler != null) {
                     fileUploadHandler(
                       pendingFileMessage.requestId!,
@@ -320,6 +324,8 @@ extension GroupChannelMessage on GroupChannel {
     }, (e, s) {
       sbLog.e(StackTrace.current, 'e: $e');
       if (isCanceled) return;
+      // Timeout already handled: handlers + events were fired in onTimeout.
+      if (isHandled) return;
 
       // Check (_20_mfm_local_cache_failed_test)
       // if (pendingFileMessage.messageCreateParams != null &&
