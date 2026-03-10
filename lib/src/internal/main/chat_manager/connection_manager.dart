@@ -98,6 +98,48 @@ class ConnectionManager {
     return await _currentState.reconnect(reset: reset);
   }
 
+  /// Reconnects after a network interface change (e.g., Wi-Fi ↔ cellular).
+  ///
+  /// On network change the existing TCP socket is stale, so we:
+  ///   1. Immediately fail all in-flight message completers → they register in
+  ///      AutoResendManager._pendingMessageMap via the error handler.
+  ///   2. Cancel all pending ACK timers (avoids 30-second AckTimeout delay).
+  ///   3. Cancel any pending reconnect timers so they don't fire concurrently.
+  ///   4. Close the WebSocket (fire-and-forget; _onWebSocketClosed clears state).
+  ///   5. Cancel the _reconnectIfNeededTimer that _onWebSocketClosed just set,
+  ///      since we drive the reconnect ourselves.
+  ///   6. Start doReconnect(reset: true) for a fresh connection with no backoff.
+  Future<void> reconnectForNetworkChange() async {
+    sbLog.i(StackTrace.current);
+
+    if (chat.chatContext.currentUser == null &&
+        chat.chatContext.currentUserId == null) {
+      return;
+    }
+
+    // 1 & 2. Fail pending messages immediately and cancel ACK timers.
+    chat.commandManager.clearCompleterMap();
+    chat.commandManager.cancelAckTimers();
+
+    // 3. Cancel any pending reconnect timers.
+    reconnectTimer?.cancel();
+    reconnectTimer = null;
+
+    // 4. Close the existing WS (triggers _onWebSocketClosed → sets
+    //    _reconnectIfNeededTimer, which we cancel in step 5).
+    if (webSocketClient.isConnected()) {
+      await webSocketClient.close(reason: 'Network change - reconnecting');
+    }
+
+    // 5. Cancel the timer _onWebSocketClosed just set, so it doesn't
+    //    fire a second reconnect attempt in 1 second.
+    _reconnectIfNeededTimer?.cancel();
+    _reconnectIfNeededTimer = null;
+
+    // 6. Start a fresh reconnect immediately (reset: true resets backoff counter).
+    await doReconnect(reset: true);
+  }
+
   Future<void> enterBackground() async {
     return await _currentState.enterBackground();
   }
@@ -540,13 +582,16 @@ class ConnectionManager {
     }
 
     // On iOS, when connection is automatically disconnected after 1 hour in idle state,
-    // attempt reconnection if still in connected state after 1 second
-    if (isConnected() && !webSocketClient.isConnected()) {
+    // attempt reconnection if still in connected/reconnecting state after 1 second.
+    // Also handles the case where AckTimeout forced WS close while in ReconnectingState
+    // (e.g., connectivity-triggered reconnect fired but connect() returned early because
+    // WS appeared still connected, then AckTimeout detected the dead WS and closed it).
+    if ((isConnected() || isReconnecting()) && !webSocketClient.isConnected()) {
       if (_reconnectIfNeededTimer != null) {
         _reconnectIfNeededTimer!.cancel();
       }
       _reconnectIfNeededTimer = Timer(const Duration(seconds: 1), () async {
-        if (isConnected() && !webSocketClient.isConnected()) {
+        if ((isConnected() || isReconnecting()) && !webSocketClient.isConnected()) {
           sbLog.d(StackTrace.current, '_reconnectIfNeeded()');
           await _reconnectIfNeeded();
         }

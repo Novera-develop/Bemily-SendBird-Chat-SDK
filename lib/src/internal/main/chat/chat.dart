@@ -249,8 +249,8 @@ class Chat with WidgetsBindingObserver {
             results.contains(ConnectivityResult.other)) {
           if (chatContext.isChatConnected) {
             if (currentUser != null || chatContext.currentUserId != null) {
-              sbLog.d(StackTrace.current, 'reconnect()');
-              await connectionManager.reconnect(reset: true);
+              sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
+              await connectionManager.reconnectForNetworkChange();
             }
           } else if (chatContext.isFeedAuthenticated) {
             if (currentUser != null) {
