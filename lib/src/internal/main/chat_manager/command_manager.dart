@@ -405,13 +405,18 @@ class CommandManager {
       _chat.connectionManager.changeState(ConnectedState(chat: _chat));
 
       if (wasReconnecting) {
+        // Complete loginCompleter immediately after ConnectedState so that
+        // reconnectForNetworkChange() (and any other waiter) can unblock
+        // without waiting for _refresh() inside onReconnected().
+        // _refresh() and startAutoResend() still run below in the background.
+        _chat.chatContext.loginCompleter?.complete(event.user);
+        _chat.chatContext.loginCompleter = null;
         await _chat.eventDispatcher.onReconnected(event);
       } else {
         await _chat.eventDispatcher.onLogin(event);
+        _chat.chatContext.loginCompleter?.complete(event.user);
+        _chat.chatContext.loginCompleter = null;
       }
-
-      _chat.chatContext.loginCompleter?.complete(event.user);
-      _chat.chatContext.loginCompleter = null;
 
       await _enterEnteredOpenChannels();
 
