@@ -456,14 +456,16 @@ class CommandManager {
 
       _chat.connectionManager.changeState(ConnectedState(chat: _chat));
 
+      // Complete loginCompleter immediately after ConnectedState is set,
+      // so _waitForConnection() unblocks without waiting for onReconnected/onLogin.
+      _chat.chatContext.loginCompleter?.complete(event.user);
+      _chat.chatContext.loginCompleter = null;
+
       if (wasReconnecting) {
         await _chat.eventDispatcher.onReconnected(event);
       } else {
         await _chat.eventDispatcher.onLogin(event);
       }
-
-      _chat.chatContext.loginCompleter?.complete(event.user);
-      _chat.chatContext.loginCompleter = null;
 
       await _enterEnteredOpenChannels();
 
