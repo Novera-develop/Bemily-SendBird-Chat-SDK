@@ -570,53 +570,14 @@ class ConnectionManager {
     if (commands.isEmpty) return;
 
     runZonedGuarded(() async {
-      // Split commands into two groups:
-      //   sequential — state-critical commands that must be processed in order
-      //     (LOGI, SYEV, USEV, EXPR, EROR, BUSY)
-      //   concurrent — independent message/event commands that can be processed
-      //     in parallel to reduce iOS buffering latency (MESG, FILE, READ, etc.)
-      //
-      // On iOS, WebSocket data is buffered more aggressively, meaning a batch
-      // can contain many incoming MESGs followed by the user's own ACK.
-      // Processing message commands concurrently prevents the ACK from being
-      // delayed by prior messages, avoiding "sent messages pile up" in UI.
-      final sequentialCmds = <Command>[];
-      final concurrentCmds = <Command>[];
-      for (final cmd in commands) {
-        if (cmd.isLogin ||
-            cmd.isSystemEvent ||
-            cmd.isUserEvent ||
-            cmd.isSessionExpired ||
-            cmd.isError ||
-            cmd.isBusy) {
-          sequentialCmds.add(cmd);
-        } else {
-          concurrentCmds.add(cmd);
-        }
-      }
-
-      // Process state-critical commands sequentially first to preserve ordering.
-      for (final command in sequentialCmds) {
-        try {
+      try {
+        for (final command in commands) {
           await chat.commandManager.processCommand(command);
-        } catch (e) {
-          sbLog.e(StackTrace.current, 'e: $e');
-          // WebSocketFailedException is fatal — abort all remaining processing.
-          if (e is WebSocketFailedException) rethrow;
         }
+      } catch (e) {
+        sbLog.e(StackTrace.current, 'e: $e');
+        rethrow;
       }
-
-      // Then process independent message/event commands concurrently.
-      await Future.wait(
-        concurrentCmds.map((command) async {
-          try {
-            await chat.commandManager.processCommand(command);
-          } catch (e) {
-            sbLog.e(StackTrace.current, 'e: $e');
-            if (e is WebSocketFailedException) rethrow;
-          }
-        }),
-      );
     }, (e, s) {
       if (chat.chatContext.loginCompleter != null &&
           !chat.chatContext.loginCompleter!.isCompleted) {
