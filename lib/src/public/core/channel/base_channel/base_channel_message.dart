@@ -197,17 +197,17 @@ extension BaseChannelMessage on BaseChannel {
         }
 
         if (handler != null) {
-          // If auto resendable, save handler and don't call it now
-          // Handler will be called after auto resend attempt
-          if (chat.chatContext.options.useAutoResend &&
-              pendingUserMessage.isAutoResendable()) {
-            pendingUserMessage.pendingHandler = handler;
-            final reqId = pendingUserMessage.requestId;
-            if (reqId != null && reqId.isNotEmpty) {
-              AutoResendManager().registerPendingHandler(reqId, handler);
-            }
-          } else {
-            handler(pendingUserMessage, e);
+          handler(pendingUserMessage, e);
+        }
+
+        // Register for auto-resend so it can retry without re-uploading.
+        // Handler was already called above; auto-resend success is signaled
+        // via collection events (onMessageSentByMe), not via this handler.
+        if (chat.chatContext.options.useAutoResend &&
+            pendingUserMessage.isAutoResendable()) {
+          final reqId = pendingUserMessage.requestId;
+          if (reqId != null && reqId.isNotEmpty) {
+            AutoResendManager().registerPendingMessage(reqId, pendingUserMessage);
           }
         }
       }
@@ -573,17 +573,14 @@ extension BaseChannelMessage on BaseChannel {
         }
 
         if (handler != null) {
-          // If auto resendable, save handler and don't call it now
-          // Handler will be called after auto resend attempt
-          if (chat.chatContext.options.useAutoResend &&
-              pendingFileMessage.isAutoResendable()) {
-            pendingFileMessage.pendingHandler = handler;
-            final reqId = pendingFileMessage.requestId;
-            if (reqId != null && reqId.isNotEmpty) {
-              AutoResendManager().registerPendingHandler(reqId, handler);
-            }
-          } else {
-            handler(pendingFileMessage, e);
+          handler(pendingFileMessage, e);
+        }
+
+        if (chat.chatContext.options.useAutoResend &&
+            pendingFileMessage.isAutoResendable()) {
+          final reqId = pendingFileMessage.requestId;
+          if (reqId != null && reqId.isNotEmpty) {
+            AutoResendManager().registerPendingMessage(reqId, pendingFileMessage);
           }
         }
       }

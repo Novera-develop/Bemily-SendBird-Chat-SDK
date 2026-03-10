@@ -374,17 +374,14 @@ extension GroupChannelMessage on GroupChannel {
         }
 
         if (handler != null) {
-          // If auto resendable, save handler and don't call it now
-          // Handler will be called after auto resend attempt
-          if (chat.chatContext.options.useAutoResend &&
-              pendingFileMessage.isAutoResendable()) {
-            pendingFileMessage.pendingHandler = handler;
-            final reqId = pendingFileMessage.requestId;
-            if (reqId != null && reqId.isNotEmpty) {
-              AutoResendManager().registerPendingHandler(reqId, handler);
-            }
-          } else {
-            handler(pendingFileMessage, e);
+          handler(pendingFileMessage, e);
+        }
+
+        if (chat.chatContext.options.useAutoResend &&
+            pendingFileMessage.isAutoResendable()) {
+          final reqId = pendingFileMessage.requestId;
+          if (reqId != null && reqId.isNotEmpty) {
+            AutoResendManager().registerPendingMessage(reqId, pendingFileMessage);
           }
         }
       }

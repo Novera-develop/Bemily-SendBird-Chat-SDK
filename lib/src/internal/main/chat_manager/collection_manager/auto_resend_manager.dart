@@ -14,19 +14,17 @@ class AutoResendManager {
   factory AutoResendManager() => _instance;
 
   static const int _delayForRateLimit = 200; // Check
-  // bool _isAutoResending = false;
-  // bool _stopAutoResending = false;
   final Map<int, bool> _isAutoResendingMap = {};
   final Map<int, bool> _stopAutoResendingMap = {};
 
-  // Stores pending handlers by requestId.
-  // pendingHandler on BaseMessage is @JsonKey(includeFromJson: false),
-  // so it's lost when the failed message is reloaded from DB by getFailedMessages().
-  // Storing it here ensures auto-resend can call it after a successful resend.
-  final Map<String, Function> _pendingHandlerMap = {};
+  // Stores failed message objects by requestId so that auto-resend can
+  // retry them even when useCollectionCaching is false (no DB).
+  // The original send handler is called immediately on failure (not saved here).
+  // Auto-resend success is signaled via collection events (onMessageSentByMe).
+  final Map<String, BaseMessage> _pendingMessageMap = {};
 
-  void registerPendingHandler(String requestId, Function handler) {
-    _pendingHandlerMap[requestId] = handler;
+  void registerPendingMessage(String requestId, BaseMessage message) {
+    _pendingMessageMap[requestId] = message;
   }
 
   void startAutoResend(Chat chat) async {
@@ -56,19 +54,27 @@ class AutoResendManager {
             continue;
           }
 
-          final failedMessages = await collection.getFailedMessages();
+          // Get failed messages from DB (empty when useCollectionCaching is false)
+          final dbFailedMessages = await collection.getFailedMessages();
+          final dbRequestIds =
+              dbFailedMessages.map((m) => m.requestId).toSet();
+
+          // Merge with in-memory messages for channels without DB.
+          final inMemoryMessages = _pendingMessageMap.values
+              .where((m) =>
+                  m.channelUrl == collection.channel.channelUrl &&
+                  !dbRequestIds.contains(m.requestId))
+              .toList();
+
+          final failedMessages = [...dbFailedMessages, ...inMemoryMessages];
 
           for (final failedMessage in failedMessages) {
             if (failedMessage.isAutoResendable()) {
-              // Get pending handler: check map first (survives DB deserialization),
-              // fall back to in-memory field.
               final requestId = failedMessage.requestId ?? '';
-              final pendingHandler = (requestId.isNotEmpty
-                      ? _pendingHandlerMap[requestId]
-                      : null) ??
-                  failedMessage.pendingHandler;
 
-              // Resend a message
+              // Resend the message. The original handler was already called
+              // when the message first failed, so we don't call it again here.
+              // Success is communicated via collection events (onMessageSentByMe).
               Completer completer = Completer();
               SendbirdException? exception;
               if (failedMessage is UserMessage) {
@@ -76,11 +82,8 @@ class AutoResendManager {
                   failedMessage,
                   handler: (UserMessage message, SendbirdException? e) {
                     exception = e;
-                    // Call pending handler with result
-                    if (pendingHandler != null) {
-                      (pendingHandler as UserMessageHandler)(message, e);
-                      failedMessage.pendingHandler = null;
-                      _pendingHandlerMap.remove(requestId);
+                    if (requestId.isNotEmpty) {
+                      _pendingMessageMap.remove(requestId);
                     }
                     completer.complete();
                   },
@@ -90,11 +93,8 @@ class AutoResendManager {
                   failedMessage,
                   handler: (FileMessage message, SendbirdException? e) {
                     exception = e;
-                    // Call pending handler with result
-                    if (pendingHandler != null) {
-                      (pendingHandler as FileMessageHandler)(message, e);
-                      failedMessage.pendingHandler = null;
-                      _pendingHandlerMap.remove(requestId);
+                    if (requestId.isNotEmpty) {
+                      _pendingMessageMap.remove(requestId);
                     }
                     completer.complete();
                   },
@@ -105,12 +105,8 @@ class AutoResendManager {
                   handler:
                       (MultipleFilesMessage message, SendbirdException? e) {
                     exception = e;
-                    // Call pending handler with result
-                    if (pendingHandler != null) {
-                      (pendingHandler as MultipleFilesMessageHandler)(
-                          message, e);
-                      failedMessage.pendingHandler = null;
-                      _pendingHandlerMap.remove(requestId);
+                    if (requestId.isNotEmpty) {
+                      _pendingMessageMap.remove(requestId);
                     }
                     completer.complete();
                   },
