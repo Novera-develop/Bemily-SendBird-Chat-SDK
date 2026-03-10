@@ -168,9 +168,8 @@ class CommandManager {
         return;
       }
 
-      // currentUser == null이면 명시적 disconnect/logout이므로 즉시 종료
-      // (네트워크 변경으로 인한 일시적 DisconnectedState는 여기서 걸리지 않음)
-      if (_chat.chatContext.currentUser == null) {
+      // 명확히 끊긴 상태 (SDK가 재연결을 시도하지 않음)
+      if (_chat.connectionManager.isDisconnected()) {
         break;
       }
 
