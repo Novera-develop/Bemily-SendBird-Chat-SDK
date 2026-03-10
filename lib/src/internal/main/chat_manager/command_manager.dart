@@ -150,73 +150,10 @@ class CommandManager {
     return _dedupIdMap.length;
   }
 
-  /// 재연결이 완료될 때까지 대기한다.
-  /// - loginCompleter를 직접 await하므로 폴링이 없고 딜레이가 최소화된다.
-  /// - isDisconnected()를 즉시 탈출 조건으로 쓰지 않는다.
-  ///   iOS 네트워크 변경 시 DisconnectedState가 순간적으로 나타났다가
-  ///   ReconnectingState로 전환되는 경우를 놓치기 때문이다.
-  ///   대신 짧게 대기 후 재확인하여 진짜 끊김(재연결 시도 없음)만 감지한다.
-  Future<void> _waitForConnection() async {
-    final deadline = DateTime.now().add(
-      Duration(seconds: _chat.chatContext.options.connectionTimeout),
-    );
-
-    while (DateTime.now().isBefore(deadline)) {
-      // 이미 연결된 상태
-      if (_chat.connectionManager.isConnected() &&
-          _chat.connectionManager.webSocketClient.isConnected()) {
-        return;
-      }
-
-      // DisconnectedState인 경우: iOS 네트워크 변경 시 순간적으로 나타날 수 있으므로
-      // 짧게 대기 후 재확인한다. 여전히 DisconnectedState이면 재연결 시도가 없는 것이므로 종료.
-      if (_chat.connectionManager.isDisconnected()) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        if (_chat.connectionManager.isDisconnected()) {
-          break;
-        }
-        continue;
-      }
-
-      final loginCompleter = _chat.chatContext.loginCompleter;
-
-      if (loginCompleter != null && !loginCompleter.isCompleted) {
-        sbLog.i(StackTrace.current, 'Waiting for reconnection to complete...');
-        try {
-          final remaining = deadline.difference(DateTime.now());
-          await loginCompleter.future.timeout(
-            remaining.isNegative ? Duration.zero : remaining,
-            onTimeout: () => throw ConnectionRequiredException(),
-          );
-          sbLog.i(StackTrace.current, 'Reconnection completed, proceeding');
-          return;
-        } catch (e) {
-          sbLog.w(StackTrace.current,
-              'Reconnection attempt failed: $e, waiting for next attempt...');
-          await Future.delayed(const Duration(milliseconds: 100));
-        }
-      } else {
-        // loginCompleter가 아직 설정되지 않음 (상태 전이 중)
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-    }
-
-    sbLog.e(StackTrace.current,
-        'Connection wait timed out or user disconnected');
-    throw ConnectionRequiredException();
-  }
-
   Future<Command?> sendCommand(Command cmd) async {
     if (_chat.chatContext.currentUser == null) {
       // NOTE: some test cases execute async socket data
       throw ConnectionRequiredException();
-    }
-
-    // 네트워크 변경 등으로 WebSocket 연결이 끊긴 경우 재연결 완료를 기다린다.
-    // auto-resend 없이 재연결 즉시 전송하여 전송 속도를 향상시킨다.
-    if (!_chat.connectionManager.isConnected() ||
-        !_chat.connectionManager.webSocketClient.isConnected()) {
-      await _waitForConnection();
     }
 
     sbLog.d(

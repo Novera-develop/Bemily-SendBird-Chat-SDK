@@ -97,9 +97,12 @@ class CollectionManager {
 
     latestLoginEvent = event;
 
-    await _refresh();
-
+    // startAutoResend를 _refresh() 전에 먼저 실행한다.
+    // _refresh()는 채널/메시지 API 호출로 시간이 걸리므로,
+    // 그 전에 실패한 메시지를 즉시 재전송하여 지연을 줄인다.
     AutoResendManager().startAutoResend(_chat);
+
+    await _refresh();
   }
 
   Future<void> _refresh() async {
