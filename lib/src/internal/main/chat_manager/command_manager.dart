@@ -184,6 +184,15 @@ class CommandManager {
         if (c != null && !c.isCompleted) {
           c.completeError(AckTimeoutException());
         }
+        // AckTimeout = 서버가 응답하지 않음 → WS가 silently dead일 가능성 높음.
+        // WS를 강제로 닫아 reconnect를 트리거한다.
+        // reconnect 완료 후 startAutoResend가 실행되어 실패한 메시지를 재전송한다.
+        if (_chat.connectionManager.webSocketClient.isConnected()) {
+          sbLog.w(StackTrace.current,
+              'AckTimeout detected, forcing WS close to trigger reconnect');
+          _chat.connectionManager.webSocketClient
+              .close(reason: 'AckTimeout - forcing reconnect');
+        }
       });
 
       _ackTimerMap[reqId] = timer;
