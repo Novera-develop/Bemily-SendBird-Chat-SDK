@@ -19,6 +19,16 @@ class AutoResendManager {
   final Map<int, bool> _isAutoResendingMap = {};
   final Map<int, bool> _stopAutoResendingMap = {};
 
+  // Stores pending handlers by requestId.
+  // pendingHandler on BaseMessage is @JsonKey(includeFromJson: false),
+  // so it's lost when the failed message is reloaded from DB by getFailedMessages().
+  // Storing it here ensures auto-resend can call it after a successful resend.
+  final Map<String, Function> _pendingHandlerMap = {};
+
+  void registerPendingHandler(String requestId, Function handler) {
+    _pendingHandlerMap[requestId] = handler;
+  }
+
   void startAutoResend(Chat chat) async {
     final chatId = chat.chatId;
 
@@ -50,8 +60,13 @@ class AutoResendManager {
 
           for (final failedMessage in failedMessages) {
             if (failedMessage.isAutoResendable()) {
-              // Get pending handler before resend
-              final pendingHandler = failedMessage.pendingHandler;
+              // Get pending handler: check map first (survives DB deserialization),
+              // fall back to in-memory field.
+              final requestId = failedMessage.requestId ?? '';
+              final pendingHandler = (requestId.isNotEmpty
+                      ? _pendingHandlerMap[requestId]
+                      : null) ??
+                  failedMessage.pendingHandler;
 
               // Resend a message
               Completer completer = Completer();
@@ -65,6 +80,7 @@ class AutoResendManager {
                     if (pendingHandler != null) {
                       (pendingHandler as UserMessageHandler)(message, e);
                       failedMessage.pendingHandler = null;
+                      _pendingHandlerMap.remove(requestId);
                     }
                     completer.complete();
                   },
@@ -78,6 +94,7 @@ class AutoResendManager {
                     if (pendingHandler != null) {
                       (pendingHandler as FileMessageHandler)(message, e);
                       failedMessage.pendingHandler = null;
+                      _pendingHandlerMap.remove(requestId);
                     }
                     completer.complete();
                   },
@@ -93,6 +110,7 @@ class AutoResendManager {
                       (pendingHandler as MultipleFilesMessageHandler)(
                           message, e);
                       failedMessage.pendingHandler = null;
+                      _pendingHandlerMap.remove(requestId);
                     }
                     completer.complete();
                   },

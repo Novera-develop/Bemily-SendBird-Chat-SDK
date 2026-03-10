@@ -202,6 +202,10 @@ extension BaseChannelMessage on BaseChannel {
           if (chat.chatContext.options.useAutoResend &&
               pendingUserMessage.isAutoResendable()) {
             pendingUserMessage.pendingHandler = handler;
+            final reqId = pendingUserMessage.requestId;
+            if (reqId != null && reqId.isNotEmpty) {
+              AutoResendManager().registerPendingHandler(reqId, handler);
+            }
           } else {
             handler(pendingUserMessage, e);
           }
@@ -574,6 +578,10 @@ extension BaseChannelMessage on BaseChannel {
           if (chat.chatContext.options.useAutoResend &&
               pendingFileMessage.isAutoResendable()) {
             pendingFileMessage.pendingHandler = handler;
+            final reqId = pendingFileMessage.requestId;
+            if (reqId != null && reqId.isNotEmpty) {
+              AutoResendManager().registerPendingHandler(reqId, handler);
+            }
           } else {
             handler(pendingFileMessage, e);
           }

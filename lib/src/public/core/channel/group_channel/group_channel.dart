@@ -6,6 +6,7 @@ import 'package:collection/collection.dart';
 import 'package:json_annotation/json_annotation.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat/chat.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_cache/cache_service.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/collection_manager/auto_resend_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/collection_manager/collection_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/collection_manager/message_retention_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/extensions/extensions.dart';

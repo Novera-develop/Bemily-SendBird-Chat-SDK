@@ -379,6 +379,10 @@ extension GroupChannelMessage on GroupChannel {
           if (chat.chatContext.options.useAutoResend &&
               pendingFileMessage.isAutoResendable()) {
             pendingFileMessage.pendingHandler = handler;
+            final reqId = pendingFileMessage.requestId;
+            if (reqId != null && reqId.isNotEmpty) {
+              AutoResendManager().registerPendingHandler(reqId, handler);
+            }
           } else {
             handler(pendingFileMessage, e);
           }
