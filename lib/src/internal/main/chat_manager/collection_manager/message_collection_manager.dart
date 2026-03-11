@@ -67,9 +67,32 @@ extension MessageCollectionManager on CollectionManager {
   }) async {
     sbLog.d(StackTrace.current);
 
+    final channelUrl = channel.channelUrl;
+
+    // Flush any pending batched received messages for this channel before
+    // processing the sent message. This prevents race conditions on iOS where
+    // the batch flush and onMessageSentByMe could run concurrently, causing
+    // the sent message to not appear on screen.
+    _batchFlushTimers[channelUrl]?.cancel();
+    _batchFlushTimers.remove(channelUrl);
+    final pendingMessages = _pendingReceivedMessages.remove(channelUrl);
+
     for (final messageCollection in baseMessageCollections) {
-      if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {
-        sendEventsToMessageCollection(
+      if (messageCollection.baseChannel.channelUrl == channelUrl) {
+        // First, flush any pending received messages to ensure correct ordering
+        if (pendingMessages != null && pendingMessages.isNotEmpty) {
+          await sendEventsToMessageCollection(
+            messageCollection: messageCollection,
+            baseChannel: messageCollection.baseChannel,
+            eventSource: CollectionEventSource.eventMessageReceived,
+            sendingStatus: SendingStatus.succeeded,
+            addedMessages: pendingMessages,
+            isReversedAddedMessages: messageCollection.params.reverse,
+          );
+        }
+
+        // Then process the sent message
+        await sendEventsToMessageCollection(
           messageCollection: messageCollection,
           baseChannel: messageCollection.baseChannel,
           eventSource: CollectionEventSource.eventMessageSent,
