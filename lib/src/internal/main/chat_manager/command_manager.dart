@@ -49,6 +49,11 @@ import 'package:uuid/uuid.dart';
 class CommandManager {
   final Map<String, Completer<Command?>> _completerMap = {};
   final Map<String, Timer> _ackTimerMap = {};
+  // Separate timer to quickly detect silently dead WS connections.
+  // Forces WS close if no ACK comes back within _deadWsDetectionSeconds,
+  // which is shorter than webSocketTimeout to reduce reconnect delay.
+  final Map<String, Timer> _deadWsTimerMap = {};
+  static const int _deadWsDetectionSeconds = 5;
   final Map<String, int> _readMap = {};
   final Map<String, Completer<int?>> messageOffsetTsCompleterMap = {};
   final Map<String, int> _dedupIdMap = {};
@@ -106,6 +111,10 @@ class CommandManager {
       _ackTimerMap[key]?.cancel();
     }
     _ackTimerMap.clear();
+    for (final key in _deadWsTimerMap.keys) {
+      _deadWsTimerMap[key]?.cancel();
+    }
+    _deadWsTimerMap.clear();
   }
 
   void clearCompleterMap({SendbirdException? e}) {
@@ -180,22 +189,35 @@ class CommandManager {
       final timer = Timer(
           Duration(seconds: _chat.chatContext.options.webSocketTimeout), () {
         _ackTimerMap.remove(reqId);
+        _deadWsTimerMap.remove(reqId)?.cancel();
         final c = _completerMap.remove(reqId);
         if (c != null && !c.isCompleted) {
           c.completeError(AckTimeoutException());
         }
-        // AckTimeout = 서버가 응답하지 않음 → WS가 silently dead일 가능성 높음.
-        // WS를 강제로 닫아 reconnect를 트리거한다.
-        // reconnect 완료 후 startAutoResend가 실행되어 실패한 메시지를 재전송한다.
-        if (_chat.connectionManager.webSocketClient.isConnected()) {
-          sbLog.w(StackTrace.current,
-              'AckTimeout detected, forcing WS close to trigger reconnect');
-          _chat.connectionManager.webSocketClient
-              .close(reason: 'AckTimeout - forcing reconnect');
-        }
+        // Dead WS check is handled by _deadWsTimerMap (already fired or cancelled).
       });
 
       _ackTimerMap[reqId] = timer;
+
+      // Start a faster dead-WS detection timer (shorter than webSocketTimeout).
+      // If no ACK returns within _deadWsDetectionSeconds, the WS connection is
+      // likely silently dead (e.g., on a dying network interface after handoff).
+      // Force-close the WS so reconnect happens quickly, then startAutoResend()
+      // re-sends the message on the new connection.
+      if (_chat.chatContext.options.webSocketTimeout > _deadWsDetectionSeconds) {
+        final deadWsTimer =
+            Timer(const Duration(seconds: _deadWsDetectionSeconds), () {
+          _deadWsTimerMap.remove(reqId);
+          if (_completerMap.containsKey(reqId) &&
+              _chat.connectionManager.webSocketClient.isConnected()) {
+            sbLog.w(StackTrace.current,
+                'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
+            _chat.connectionManager.webSocketClient
+                .close(reason: 'DeadWsDetection - no ACK in ${_deadWsDetectionSeconds}s');
+          }
+        });
+        _deadWsTimerMap[reqId] = deadWsTimer;
+      }
       if (cmd.isRead) {
         _readMap[reqId] = DateTime.now().millisecondsSinceEpoch;
       }
@@ -223,6 +245,7 @@ class CommandManager {
           final ts = _readMap[reqId];
           if (ackTs == null || ts == null || ts <= ackTs) {
             _ackTimerMap.remove(reqId)?.cancel();
+            _deadWsTimerMap.remove(reqId)?.cancel();
             removedReadReqIdList.add(reqId);
           }
         }
@@ -232,6 +255,7 @@ class CommandManager {
         }
       } else {
         _ackTimerMap.remove(cmd.requestId)?.cancel();
+        _deadWsTimerMap.remove(cmd.requestId)?.cancel();
       }
 
       final completer = _completerMap.remove(cmd.requestId);
