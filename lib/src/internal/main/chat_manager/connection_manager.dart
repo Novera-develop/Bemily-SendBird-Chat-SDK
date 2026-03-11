@@ -571,7 +571,8 @@ class ConnectionManager {
 
   void _onWebSocketClosed() async {
     chat.commandManager.clearCompleterMap();
-    chat.commandManager.cancelAckTimers(); // Cancel ack timers to prevent AckTimeoutException
+    chat.commandManager
+        .cancelAckTimers(); // Cancel ack timers to prevent AckTimeoutException
 
     final closeCode = webSocketClient.getCloseCode();
     if (closeCode != null) {
@@ -592,7 +593,8 @@ class ConnectionManager {
         _reconnectIfNeededTimer!.cancel();
       }
       _reconnectIfNeededTimer = Timer(const Duration(seconds: 1), () async {
-        if ((isConnected() || isReconnecting()) && !webSocketClient.isConnected()) {
+        if ((isConnected() || isReconnecting()) &&
+            !webSocketClient.isConnected()) {
           sbLog.d(StackTrace.current, '_reconnectIfNeeded()');
           await _reconnectIfNeeded();
         }
