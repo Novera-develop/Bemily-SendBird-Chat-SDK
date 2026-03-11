@@ -271,8 +271,17 @@ class Chat with WidgetsBindingObserver {
           results.contains(ConnectivityResult.other)) {
         if (chatContext.isChatConnected) {
           if (currentUser != null || chatContext.currentUserId != null) {
-            sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
-            await connectionManager.reconnectForNetworkChange();
+            if (connectionManager.isReconnecting()) {
+              // Already reconnecting — the in-progress attempt will use the
+              // new network once the connection is established. Triggering
+              // another reconnect would cancel the ongoing WS connect and
+              // restart from scratch, causing extra latency especially on iOS
+              // where multiple connectivity events fire per network change.
+              sbLog.d(StackTrace.current, 'Already reconnecting, skip');
+            } else {
+              sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
+              await connectionManager.reconnectForNetworkChange();
+            }
           }
         } else if (chatContext.isFeedAuthenticated) {
           if (currentUser != null) {
