@@ -1,6 +1,7 @@
 // Copyright (c) 2023 Sendbird, Inc. All rights reserved.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:sendbird_chat_sdk/sendbird_chat_sdk.dart';
@@ -46,6 +47,13 @@ class CollectionManager {
   // Test
   LoginEvent? latestLoginEvent;
 
+  // Batching for incoming messages to reduce per-message DB writes, sorts, and
+  // UI callbacks — especially important on iOS where Isar writes are slower.
+  // Messages received within _batchWindow are grouped and processed together.
+  static const Duration _batchWindow = Duration(milliseconds: 100);
+  final Map<String, List<RootMessage>> _pendingReceivedMessages = {};
+  final Map<String, Timer> _batchFlushTimers = {};
+
   CollectionManager({required Chat chat}) : _chat = chat {
     _chat.eventManager.addInternalChannelHandler(
       identifierForInternalGroupChannelHandlerForCollectionManager,
@@ -55,6 +63,55 @@ class CollectionManager {
       identifierForInternalFeedChannelHandlerForCollectionManager,
       InternalFeedChannelHandlerForCollectionManager(this),
     );
+  }
+
+  /// Queues an incoming message for batched processing.
+  /// Messages received within [_batchWindow] are flushed together via a single
+  /// DB write + sort + UI callback, significantly reducing overhead on iOS.
+  void _queueIncomingMessage(BaseChannel channel, RootMessage message) {
+    if (Platform.isIOS) {
+      final channelUrl = channel.channelUrl;
+      _pendingReceivedMessages.putIfAbsent(channelUrl, () => []).add(message);
+
+      _batchFlushTimers[channelUrl]?.cancel();
+      _batchFlushTimers[channelUrl] = Timer(_batchWindow, () {
+        _flushIncomingMessages(channel, channelUrl);
+      });
+    } else {
+      for (final collection in baseMessageCollections) {
+        if (collection.baseChannel.channelUrl == channel.channelUrl) {
+          sendEventsToMessageCollection(
+            messageCollection: collection,
+            baseChannel: channel,
+            eventSource: CollectionEventSource.eventMessageReceived,
+            sendingStatus: SendingStatus.succeeded,
+            addedMessages: [message],
+            isReversedAddedMessages: collection.params.reverse,
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  void _flushIncomingMessages(BaseChannel channel, String channelUrl) {
+    _batchFlushTimers.remove(channelUrl);
+    final messages = _pendingReceivedMessages.remove(channelUrl);
+    if (messages == null || messages.isEmpty) return;
+
+    for (final collection in baseMessageCollections) {
+      if (collection.baseChannel.channelUrl == channelUrl) {
+        sendEventsToMessageCollection(
+          messageCollection: collection,
+          baseChannel: channel,
+          eventSource: CollectionEventSource.eventMessageReceived,
+          sendingStatus: SendingStatus.succeeded,
+          addedMessages: messages,
+          isReversedAddedMessages: collection.params.reverse,
+        );
+        break;
+      }
+    }
   }
 
   void _setInitialGroupChannelChangeLogsTs() {
@@ -554,20 +611,7 @@ class InternalGroupChannelHandlerForCollectionManager
   @override
   void onMessageReceived(BaseChannel channel, RootMessage message) async {
     if (channel is GroupChannel || channel is FeedChannel) {
-      for (final messageCollection
-          in _collectionManager.baseMessageCollections) {
-        if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {
-          _collectionManager.sendEventsToMessageCollection(
-            messageCollection: messageCollection,
-            baseChannel: channel,
-            eventSource: CollectionEventSource.eventMessageReceived,
-            sendingStatus: SendingStatus.succeeded,
-            addedMessages: [message],
-            isReversedAddedMessages: messageCollection.params.reverse,
-          );
-          break;
-        }
-      }
+      _collectionManager._queueIncomingMessage(channel, message);
 
       if (channel is GroupChannel) {
         _collectionManager.sendEventsToGroupChannelCollectionList(
@@ -977,20 +1021,7 @@ class InternalFeedChannelHandlerForCollectionManager
   void onMessageReceived(
       BaseChannel channel, NotificationMessage message) async {
     if (channel is FeedChannel) {
-      for (final messageCollection
-          in _collectionManager.baseMessageCollections) {
-        if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {
-          _collectionManager.sendEventsToMessageCollection(
-            messageCollection: messageCollection,
-            baseChannel: channel,
-            eventSource: CollectionEventSource.eventMessageReceived,
-            sendingStatus: SendingStatus.succeeded,
-            addedMessages: [message],
-            isReversedAddedMessages: messageCollection.params.reverse,
-          );
-          break;
-        }
-      }
+      _collectionManager._queueIncomingMessage(channel, message);
     }
   }
 

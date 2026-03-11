@@ -25,6 +25,13 @@ extension MessageCollectionManager on CollectionManager {
 // Clean up
 //------------------------------//
   void cleanUpMessageCollections() {
+    // Cancel pending batch timers and discard buffered messages.
+    for (final timer in _batchFlushTimers.values) {
+      timer.cancel();
+    }
+    _batchFlushTimers.clear();
+    _pendingReceivedMessages.clear();
+
     for (final messageCollection in baseMessageCollections) {
       messageCollection.cleanUp();
     }
