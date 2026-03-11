@@ -1,12 +1,12 @@
 #!/bin/sh
 # This is a generated file; do not edit or check into version control.
 export "FLUTTER_ROOT=/Users/swom/flutter/sdk/flutter"
-export "FLUTTER_APPLICATION_PATH=/Users/swom/flutter/project/sendbird-chat-sdk"
+export "FLUTTER_APPLICATION_PATH=/Users/swom/flutter/project/Bemily-SendBird-Chat-SDK"
 export "COCOAPODS_PARALLEL_CODE_SIGN=true"
 export "FLUTTER_TARGET=lib/main.dart"
 export "FLUTTER_BUILD_DIR=build"
-export "FLUTTER_BUILD_NAME=4.7.0"
-export "FLUTTER_BUILD_NUMBER=4.7.0"
+export "FLUTTER_BUILD_NAME=4.8.0"
+export "FLUTTER_BUILD_NUMBER=4.8.0"
 export "DART_OBFUSCATION=false"
 export "TRACK_WIDGET_CREATION=true"
 export "TREE_SHAKE_ICONS=false"

@@ -661,6 +661,22 @@ extension MessageCollectionManager on CollectionManager {
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {
+      // For real-time and send-path events, DB writes are for offline caching only.
+      // Run them in the background so the UI updates immediately without waiting
+      // for Isar writes (which are slow on iOS and block under high message volume).
+      //
+      // - eventMessageReceived: incoming real-time messages
+      // - localMessagePendingCreated: show pending bubble immediately on send
+      // - eventMessageSent: show sent confirmation immediately on ACK
+      // - localMessageResendStarted: show resend attempt immediately
+      // - localMessageFailed: show failure immediately
+      final isRealtimeReceive =
+          eventSource == CollectionEventSource.eventMessageReceived ||
+          eventSource == CollectionEventSource.localMessagePendingCreated ||
+          eventSource == CollectionEventSource.eventMessageSent ||
+          eventSource == CollectionEventSource.localMessageResendStarted ||
+          eventSource == CollectionEventSource.localMessageFailed;
+
       // [First] delete
       if (deletedMessageIds != null && deletedMessageIds.isNotEmpty) {
         if (!(eventSource == CollectionEventSource.messageInitialize &&
@@ -671,27 +687,42 @@ extension MessageCollectionManager on CollectionManager {
               .map((id) => (id is String) ? id : id.toString())
               .toList();
 
-          // MessageChunk
-          await _chat.dbManager.deleteMessagesInChunk(
-            channelUrl: baseChannel.channelUrl,
-            rootIds: deletedStringIds.where((id) {
-              if (addedMessages != null && isContinuousAddedMessages) {
-                for (final message in addedMessages) {
-                  if (id == message.rootId) {
-                    return false;
-                  }
+          final rootIdsToDelete = deletedStringIds.where((id) {
+            if (addedMessages != null && isContinuousAddedMessages) {
+              for (final message in addedMessages) {
+                if (id == message.rootId) {
+                  return false;
                 }
               }
-              return true;
-            }).toList(),
-          );
+            }
+            return true;
+          }).toList();
 
-          await _chat.dbManager.deleteMessages(baseChannel, deletedStringIds);
+          if (isRealtimeReceive) {
+            // MessageChunk
+            unawaited(_chat.dbManager.deleteMessagesInChunk(
+              channelUrl: baseChannel.channelUrl,
+              rootIds: rootIdsToDelete,
+            ));
+            unawaited(
+                _chat.dbManager.deleteMessages(baseChannel, deletedStringIds));
+          } else {
+            // MessageChunk
+            await _chat.dbManager.deleteMessagesInChunk(
+              channelUrl: baseChannel.channelUrl,
+              rootIds: rootIdsToDelete,
+            );
+            await _chat.dbManager.deleteMessages(baseChannel, deletedStringIds);
+          }
         }
       }
 
       if (addedMessages != null && addedMessages.isNotEmpty) {
-        await _chat.dbManager.upsertMessages(addedMessages);
+        if (isRealtimeReceive) {
+          unawaited(_chat.dbManager.upsertMessages(addedMessages));
+        } else {
+          await _chat.dbManager.upsertMessages(addedMessages);
+        }
 
         if (isContinuousAddedMessages) {
           // For offline messaging
@@ -700,10 +731,17 @@ extension MessageCollectionManager on CollectionManager {
           }
 
           // MessageChunk
-          await _chat.dbManager.upsertMessagesInChunk(
-            channelUrl: baseChannel.channelUrl,
-            messages: addedMessages,
-          );
+          if (isRealtimeReceive) {
+            unawaited(_chat.dbManager.upsertMessagesInChunk(
+              channelUrl: baseChannel.channelUrl,
+              messages: addedMessages,
+            ));
+          } else {
+            await _chat.dbManager.upsertMessagesInChunk(
+              channelUrl: baseChannel.channelUrl,
+              messages: addedMessages,
+            );
+          }
         } else if (addedMessages.length == 1 &&
             addedMessages[0] is BaseMessage &&
             (addedMessages[0] as BaseMessage).previousMessageId != null &&
@@ -721,10 +759,17 @@ extension MessageCollectionManager on CollectionManager {
 
               if (previousMessage != null) {
                 // MessageChunk
-                await _chat.dbManager.upsertMessagesInChunk(
-                  channelUrl: baseChannel.channelUrl,
-                  messages: [previousMessage, addedMessages[0]],
-                );
+                if (isRealtimeReceive) {
+                  unawaited(_chat.dbManager.upsertMessagesInChunk(
+                    channelUrl: baseChannel.channelUrl,
+                    messages: [previousMessage, addedMessages[0]],
+                  ));
+                } else {
+                  await _chat.dbManager.upsertMessagesInChunk(
+                    channelUrl: baseChannel.channelUrl,
+                    messages: [previousMessage, addedMessages[0]],
+                  );
+                }
               }
             }
           }
@@ -732,7 +777,11 @@ extension MessageCollectionManager on CollectionManager {
       }
 
       if (updatedMessages != null && updatedMessages.isNotEmpty) {
-        await _chat.dbManager.upsertMessages(updatedMessages);
+        if (isRealtimeReceive) {
+          unawaited(_chat.dbManager.upsertMessages(updatedMessages));
+        } else {
+          await _chat.dbManager.upsertMessages(updatedMessages);
+        }
       }
     }
     //- [DBManager]
