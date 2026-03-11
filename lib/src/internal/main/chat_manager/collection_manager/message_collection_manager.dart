@@ -67,32 +67,9 @@ extension MessageCollectionManager on CollectionManager {
   }) async {
     sbLog.d(StackTrace.current);
 
-    final channelUrl = channel.channelUrl;
-
-    // Flush any pending batched received messages for this channel before
-    // processing the sent message. This prevents race conditions on iOS where
-    // the batch flush and onMessageSentByMe could run concurrently, causing
-    // the sent message to not appear on screen.
-    _batchFlushTimers[channelUrl]?.cancel();
-    _batchFlushTimers.remove(channelUrl);
-    final pendingMessages = _pendingReceivedMessages.remove(channelUrl);
-
     for (final messageCollection in baseMessageCollections) {
-      if (messageCollection.baseChannel.channelUrl == channelUrl) {
-        // First, flush any pending received messages to ensure correct ordering
-        if (pendingMessages != null && pendingMessages.isNotEmpty) {
-          await sendEventsToMessageCollection(
-            messageCollection: messageCollection,
-            baseChannel: messageCollection.baseChannel,
-            eventSource: CollectionEventSource.eventMessageReceived,
-            sendingStatus: SendingStatus.succeeded,
-            addedMessages: pendingMessages,
-            isReversedAddedMessages: messageCollection.params.reverse,
-          );
-        }
-
-        // Then process the sent message
-        await sendEventsToMessageCollection(
+      if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {
+        sendEventsToMessageCollection(
           messageCollection: messageCollection,
           baseChannel: messageCollection.baseChannel,
           eventSource: CollectionEventSource.eventMessageSent,
@@ -797,6 +774,17 @@ extension MessageCollectionManager on CollectionManager {
         for (final message in messageCollection.messageList) {
           if (eventSource != CollectionEventSource.localMessagePendingCreated) {
             if (message.getMessageId() == addedMessage.getMessageId()) {
+              isMessageExists = true;
+              break;
+            }
+          } else if (addedMessage is BaseMessage && message is BaseMessage) {
+            // On iOS, Isar writes are slow: when many messages are being
+            // received, localMessagePendingCreated DB write may complete AFTER
+            // onMessageSentByMe already added the confirmed sent message.
+            // Check by requestId to prevent adding a stale pending message
+            // when the same message was already confirmed and added as sent.
+            if (addedMessage.requestId != null &&
+                addedMessage.requestId == message.requestId) {
               isMessageExists = true;
               break;
             }
