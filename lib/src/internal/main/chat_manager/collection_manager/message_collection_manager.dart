@@ -544,17 +544,31 @@ extension MessageCollectionManager on CollectionManager {
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {
-      if (updatedChannels != null) {
-        for (final channel in updatedChannels) {
-          if (channel is GroupChannel) {
-            await _chat.dbManager.upsertGroupChannels([channel]);
-          } else if (channel is FeedChannel) {
-            await _chat.dbManager.upsertFeedChannels([channel]);
+      // Skip DB writes for transient events that fire at high frequency with
+      // many users in a channel (typing, read/delivery receipts). These are
+      // ephemeral and do not need to be persisted — writing them on every event
+      // floods the Isar write queue and blocks message delivery on iOS.
+      final isTransientEvent =
+          eventSource == CollectionEventSource.eventTypingStatusUpdated ||
+          // ignore: deprecated_member_use_from_same_package
+          eventSource == CollectionEventSource.eventReadStatusUpdated ||
+          eventSource == CollectionEventSource.eventUserMarkedRead ||
+          eventSource == CollectionEventSource.eventUserMarkedUnread ||
+          eventSource == CollectionEventSource.eventDeliveryStatusUpdated;
+
+      if (!isTransientEvent) {
+        if (updatedChannels != null) {
+          for (final channel in updatedChannels) {
+            if (channel is GroupChannel) {
+              await _chat.dbManager.upsertGroupChannels([channel]);
+            } else if (channel is FeedChannel) {
+              await _chat.dbManager.upsertFeedChannels([channel]);
+            }
           }
         }
-      }
-      if (deletedChannelUrls != null) {
-        await _chat.dbManager.deleteGroupChannels(deletedChannelUrls);
+        if (deletedChannelUrls != null) {
+          await _chat.dbManager.deleteGroupChannels(deletedChannelUrls);
+        }
       }
     }
     //- [DBManager]

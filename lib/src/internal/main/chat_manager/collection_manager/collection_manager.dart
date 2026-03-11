@@ -73,10 +73,14 @@ class CollectionManager {
       final channelUrl = channel.channelUrl;
       _pendingReceivedMessages.putIfAbsent(channelUrl, () => []).add(message);
 
-      _batchFlushTimers[channelUrl]?.cancel();
-      _batchFlushTimers[channelUrl] = Timer(_batchWindow, () {
-        _flushIncomingMessages(channel, channelUrl);
-      });
+      // Throttle (not debounce): only start a timer if one isn't already
+      // running. This guarantees flush happens within _batchWindow even when
+      // messages arrive continuously, preventing unbounded queue growth.
+      if (!_batchFlushTimers.containsKey(channelUrl)) {
+        _batchFlushTimers[channelUrl] = Timer(_batchWindow, () {
+          _flushIncomingMessages(channel, channelUrl);
+        });
+      }
     } else {
       for (final collection in baseMessageCollections) {
         if (collection.baseChannel.channelUrl == channel.channelUrl) {
