@@ -1,7 +1,6 @@
 // Copyright (c) 2023 Sendbird, Inc. All rights reserved.
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:sendbird_chat_sdk/sendbird_chat_sdk.dart';
@@ -69,32 +68,13 @@ class CollectionManager {
   /// Messages received within [_batchWindow] are flushed together via a single
   /// DB write + sort + UI callback, significantly reducing overhead on iOS.
   void _queueIncomingMessage(BaseChannel channel, RootMessage message) {
-    if (Platform.isIOS) {
-      final channelUrl = channel.channelUrl;
-      _pendingReceivedMessages.putIfAbsent(channelUrl, () => []).add(message);
+    final channelUrl = channel.channelUrl;
+    _pendingReceivedMessages.putIfAbsent(channelUrl, () => []).add(message);
 
-      // Throttle (not debounce): only start a timer if one isn't already
-      // running. This guarantees flush happens within _batchWindow even when
-      // messages arrive continuously, preventing unbounded queue growth.
-      if (!_batchFlushTimers.containsKey(channelUrl)) {
-        _batchFlushTimers[channelUrl] = Timer(_batchWindow, () {
-          _flushIncomingMessages(channel, channelUrl);
-        });
-      }
-    } else {
-      for (final collection in baseMessageCollections) {
-        if (collection.baseChannel.channelUrl == channel.channelUrl) {
-          sendEventsToMessageCollection(
-            messageCollection: collection,
-            baseChannel: channel,
-            eventSource: CollectionEventSource.eventMessageReceived,
-            sendingStatus: SendingStatus.succeeded,
-            addedMessages: [message],
-            isReversedAddedMessages: collection.params.reverse,
-          );
-          break;
-        }
-      }
+    if (!_batchFlushTimers.containsKey(channelUrl)) {
+      _batchFlushTimers[channelUrl] = Timer(_batchWindow, () {
+        _flushIncomingMessages(channel, channelUrl);
+      });
     }
   }
 
