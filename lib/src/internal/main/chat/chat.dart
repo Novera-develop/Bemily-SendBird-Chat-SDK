@@ -261,7 +261,8 @@ class Chat with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _handleConnectivityResults(List<ConnectivityResult> results) async {
+  Future<void> _handleConnectivityResults(
+      List<ConnectivityResult> results) async {
     _isHandlingConnectivityChange = true;
     try {
       if (results.contains(ConnectivityResult.mobile) ||
@@ -277,9 +278,9 @@ class Chat with WidgetsBindingObserver {
               // another reconnect would cancel the ongoing WS connect and
               // restart from scratch, causing extra latency especially on iOS
               // where multiple connectivity events fire per network change.
-              sbLog.d(StackTrace.current, 'Already reconnecting, skip');
+              sbLog.e(StackTrace.current, 'Already reconnecting, skip');
             } else {
-              sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
+              sbLog.e(StackTrace.current, 'reconnectForNetworkChange()');
               await connectionManager.reconnectForNetworkChange();
             }
           }
