@@ -97,6 +97,13 @@ class Chat with WidgetsBindingObserver {
   int lastMarkAsReadTimestamp;
   bool isBackground = false;
 
+  // Connectivity change serialization:
+  // Prevents concurrent handling of rapid network changes.
+  // While one event is being processed, the latest incoming result is buffered
+  // and processed after the current one finishes (intermediate events discarded).
+  bool _isHandlingConnectivityChange = false;
+  List<ConnectivityResult>? _pendingConnectivityResults;
+
   // This allows a value of type T or T? to be treated as a value of type T?.
   // We use this so that APIs that have become non-nullable can still be used
   // with `!` and `?` to support older versions of the API as well.
@@ -242,37 +249,58 @@ class Chat with WidgetsBindingObserver {
               '[connectivity_plus ^6.0.0] ${results.toString()}');
         }
 
-        if (results.contains(ConnectivityResult.mobile) ||
-            results.contains(ConnectivityResult.wifi) ||
-            results.contains(ConnectivityResult.ethernet) ||
-            results.contains(ConnectivityResult.vpn) ||
-            results.contains(ConnectivityResult.other)) {
-          if (chatContext.isChatConnected) {
-            if (currentUser != null || chatContext.currentUserId != null) {
-              sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
-              await connectionManager.reconnectForNetworkChange();
-            }
-          } else if (chatContext.isFeedAuthenticated) {
-            if (currentUser != null) {
-              sbLog.d(StackTrace.current, 'refreshNotificationCollections()');
-              collectionManager.refreshNotificationCollections();
-            }
-          }
-        } else if (results.contains(ConnectivityResult.bluetooth)) {
-          // Nothing
-        } else if (results.contains(ConnectivityResult.none)) {
-          channelCache.markAsDirtyAll(); // Check
-
-          statManager.appendWsDisconnectStat(
-            success: true,
-            errorCode: SendbirdError.networkError,
-            errorDescription: "cause=network_closed",
-          );
-
-          sbLog.d(StackTrace.current, 'disconnect()');
-          await connectionManager.disconnect(logout: false);
+        if (_isHandlingConnectivityChange) {
+          // Another event is already being processed — buffer the latest result
+          // and let the current handler pick it up when done.
+          _pendingConnectivityResults = results;
+          return;
         }
+
+        await _handleConnectivityResults(results);
       });
+    }
+  }
+
+  Future<void> _handleConnectivityResults(List<ConnectivityResult> results) async {
+    _isHandlingConnectivityChange = true;
+    try {
+      if (results.contains(ConnectivityResult.mobile) ||
+          results.contains(ConnectivityResult.wifi) ||
+          results.contains(ConnectivityResult.ethernet) ||
+          results.contains(ConnectivityResult.vpn) ||
+          results.contains(ConnectivityResult.other)) {
+        if (chatContext.isChatConnected) {
+          if (currentUser != null || chatContext.currentUserId != null) {
+            sbLog.d(StackTrace.current, 'reconnectForNetworkChange()');
+            await connectionManager.reconnectForNetworkChange();
+          }
+        } else if (chatContext.isFeedAuthenticated) {
+          if (currentUser != null) {
+            sbLog.d(StackTrace.current, 'refreshNotificationCollections()');
+            collectionManager.refreshNotificationCollections();
+          }
+        }
+      } else if (results.contains(ConnectivityResult.none)) {
+        channelCache.markAsDirtyAll(); // Check
+
+        statManager.appendWsDisconnectStat(
+          success: true,
+          errorCode: SendbirdError.networkError,
+          errorDescription: "cause=network_closed",
+        );
+
+        sbLog.d(StackTrace.current, 'disconnect()');
+        await connectionManager.disconnect(logout: false);
+      }
+    } finally {
+      _isHandlingConnectivityChange = false;
+
+      // If a newer event arrived while we were busy, process it now.
+      final pending = _pendingConnectivityResults;
+      if (pending != null) {
+        _pendingConnectivityResults = null;
+        await _handleConnectivityResults(pending);
+      }
     }
   }
 
