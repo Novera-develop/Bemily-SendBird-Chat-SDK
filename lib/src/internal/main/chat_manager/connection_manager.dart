@@ -127,9 +127,10 @@ class ConnectionManager {
 
     // 4. Close the existing WS (triggers _onWebSocketClosed → sets
     //    _reconnectIfNeededTimer, which we cancel in step 5).
-    if (webSocketClient.isConnected()) {
-      await webSocketClient.close(reason: 'Network change - reconnecting');
-    }
+    // close() is a no-op when _webSocketChannel is null, so calling it
+    // unconditionally also covers the "connecting but not yet connected" case
+    // where isConnected() returns false but a socket is in progress.
+    await webSocketClient.close(reason: 'Network change - reconnecting');
 
     // 5. Cancel the timer _onWebSocketClosed just set, so it doesn't
     //    fire a second reconnect attempt in 1 second.
