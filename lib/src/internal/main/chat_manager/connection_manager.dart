@@ -695,7 +695,7 @@ class ConnectionManager {
   String get _sbSdkUserAgentHeader {
     const mainSdkInfo = 'chat/${Chat.platform}/$sdkVersion';
     final deviceOsPlatform = kIsWeb ? 'web' : Platform.operatingSystem;
-    final osVersion = kIsWeb ? '' : Platform.operatingSystemVersion;
+    final osVersion = _sanitizedOsVersion;
     // '2.19.0 (stable) (Mon Jan 23 11:29:09 2023 -0800) on "android_arm64"'
     final platformVersion = kIsWeb ? '' : Platform.version.split(' ').first;
 
@@ -717,9 +717,20 @@ class ConnectionManager {
       chat.chatContext.appId,
       chat.chatContext.appVersion ?? '',
       kIsWeb ? 'web' : Platform.operatingSystem,
-      kIsWeb ? '' : Platform.operatingSystemVersion,
+      _sanitizedOsVersion,
     ];
     return headers.join(',');
+  }
+
+  String get _sanitizedOsVersion {
+    if (kIsWeb) return '';
+    final version = Platform.operatingSystemVersion;
+    // macOS/Windows returns localized version string on non-English systems
+    // e.g. Korean macOS: "버전 26.0(빌드 25A354)" → invalid HTTP header value
+    if (Platform.isMacOS || Platform.isWindows) {
+      return version.replaceAll(RegExp(r'[^\x00-\x7F]'), '').trim();
+    }
+    return version;
   }
 
   Future<Map<String, String>> _getWebSocketParams({
