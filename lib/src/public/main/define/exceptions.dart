@@ -170,6 +170,26 @@ class UnauthorizedException extends SendbirdException {
             message: message);
 }
 
+/// RateLimitExceededException
+///
+/// HTTP 429 응답. `code` 는 서버 응답 본문의 code(있으면 500910),
+/// `httpStatusCode` 는 HTTP 상태, `retryAfter` 는 Retry-After 헤더 또는
+/// x-ratelimit-reset 값(초)에서 파싱한 대기 시간이다(없으면 null).
+class RateLimitExceededException extends SendbirdException {
+  final int httpStatusCode;
+  final Duration? retryAfter;
+
+  RateLimitExceededException({
+    String? message,
+    int? code,
+    this.httpStatusCode = 429,
+    this.retryAfter,
+  }) : super(
+            name: (RateLimitExceededException).toString(),
+            code: code ?? SendbirdError.rateLimitExceeded,
+            message: message);
+}
+
 /// InternalServerException
 class InternalServerException extends SendbirdException {
   InternalServerException({String? message, int? code})

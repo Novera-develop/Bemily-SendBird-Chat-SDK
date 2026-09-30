@@ -391,6 +391,36 @@ class HttpClient {
     return commonHeaders;
   }
 
+  static const int _httpStatusTooManyRequests = 429;
+
+  /// 429 응답의 대기 시간. Retry-After(초) 헤더가 우선, 없으면
+  /// x-ratelimit-reset(초, 소수 가능)을 쓴다. 둘 다 없거나 파싱 불가면 null.
+  static Duration? parseRateLimitRetryAfter(Map<String, String> headers) {
+    for (final key in const ['retry-after', 'x-ratelimit-reset']) {
+      final raw = headers[key];
+      if (raw == null) continue;
+      final seconds = double.tryParse(raw.trim());
+      if (seconds == null || seconds < 0) continue;
+      return Duration(milliseconds: (seconds * 1000).round());
+    }
+    return null;
+  }
+
+  RateLimitExceededException _rateLimitException(
+    http.Response response,
+    dynamic body,
+  ) {
+    final message =
+        body is Map ? body['message'] as String? : response.body.toString();
+    final code = body is Map ? body['code'] as int? : null;
+    return RateLimitExceededException(
+      message: message,
+      code: code,
+      httpStatusCode: response.statusCode,
+      retryAfter: parseRateLimitRetryAfter(response.headers),
+    );
+  }
+
   Future<dynamic> _response(http.Response response) async {
     dynamic body;
 
@@ -398,6 +428,10 @@ class HttpClient {
       body = jsonDecode(response.body.toString());
     } catch (e) {
       sbLog.e(StackTrace.current, 'e: $e');
+      if (response.statusCode == _httpStatusTooManyRequests) {
+        // 본문이 JSON 이 아니어도 429 는 typed 예외로 전달한다.
+        throw _rateLimitException(response, null);
+      }
       throw MalformedDataException();
     }
 
@@ -424,6 +458,8 @@ class HttpClient {
       case 403:
         throw UnauthorizedException(
             message: body['message'], code: body['code']);
+      case _httpStatusTooManyRequests:
+        throw _rateLimitException(response, body);
       case 500:
       default:
         throw InternalServerException(
