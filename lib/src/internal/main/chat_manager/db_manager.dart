@@ -237,18 +237,23 @@ class DBManager {
   }
 
   Future<User?> getLoginInfoByException(
-      String userId, SendbirdException e) async {
+      String userId, SendbirdException e, {bool Function()? shouldProceed}) async {
     User? user;
-    if (isEnabled()) {
+    if (isEnabled() && shouldProceed?.call() != false) {
       if (e.code == SendbirdError.userNotExist ||
           e.code == SendbirdError.accessTokenNotValid ||
           e.code == SendbirdError.accessTokenRevoked) {
-        await _db.clear();
+        await getDB().clear();
       } else {
-        final login = await _db.getLogin(userId);
+        final login = await getDB().getLogin(userId);
+        if (shouldProceed?.call() == false) return null;
         if (login != null) {
-          user = await _db.getUser(userId);
+          user = await getDB().getUser(userId);
+          if (shouldProceed?.call() == false) return null;
           if (user != null) {
+            final sessionKey = await _chat.sessionManager.getSessionKey(
+                shouldProceed: shouldProceed);
+            if (shouldProceed?.call() == false) return null;
             _chat.chatContext.currentUser = user;
             _chat.chatContext.currentUserId = user.userId;
             _chat.chatContext.services = login.services;
@@ -259,11 +264,7 @@ class DBManager {
             _chat.chatContext.lastConnectedAt = login.lastConnectedAt;
             _chat.chatContext.reconnectConfig = login.reconnectConfig;
 
-            // sessionKey
-            _chat.chatContext.sessionKey =
-                await _chat.sessionManager.getSessionKey();
-
-            // reconnectTask
+            _chat.chatContext.sessionKey = sessionKey;
             if (_chat.chatContext.reconnectConfig != null) {
               _chat.chatContext.reconnectTask =
                   ReconnectTask(_chat.chatContext.reconnectConfig!);

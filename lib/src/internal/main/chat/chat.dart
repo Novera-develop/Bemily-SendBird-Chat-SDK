@@ -103,6 +103,8 @@ class Chat with WidgetsBindingObserver {
   // and processed after the current one finishes (intermediate events discarded).
   bool _isHandlingConnectivityChange = false;
   List<ConnectivityResult>? _pendingConnectivityResults;
+  NetworkPathHooks? networkPathHooks;
+  late Object sdkInstance = this;
 
   // This allows a value of type T or T? to be treated as a value of type T?.
   // We use this so that APIs that have become non-nullable can still be used
@@ -256,15 +258,26 @@ class Chat with WidgetsBindingObserver {
           return;
         }
 
-        await _handleConnectivityResults(results);
+        await handleConnectivityResults(results);
       });
     }
   }
 
-  Future<void> _handleConnectivityResults(
+  Future<void> handleConnectivityResults(
       List<ConnectivityResult> results) async {
     _isHandlingConnectivityChange = true;
     try {
+      final hooks = networkPathHooks;
+      if (hooks != null) {
+        await hooks.onConnectivityChanged(
+          sdkInstance: sdkInstance,
+          hasWifi: results.contains(ConnectivityResult.wifi),
+          hasCellular: results.contains(ConnectivityResult.mobile),
+          hasVpn: results.contains(ConnectivityResult.vpn),
+          isOnline: results.any((result) => result != ConnectivityResult.none),
+        );
+        return;
+      }
       if (results.contains(ConnectivityResult.mobile) ||
           results.contains(ConnectivityResult.wifi) ||
           results.contains(ConnectivityResult.ethernet) ||
@@ -309,7 +322,7 @@ class Chat with WidgetsBindingObserver {
       final pending = _pendingConnectivityResults;
       if (pending != null) {
         _pendingConnectivityResults = null;
-        await _handleConnectivityResults(pending);
+        await handleConnectivityResults(pending);
       }
     }
   }

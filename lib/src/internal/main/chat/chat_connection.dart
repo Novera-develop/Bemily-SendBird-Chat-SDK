@@ -9,6 +9,7 @@ extension ChatConnection on Chat {
     String? accessToken,
     String? apiHost,
     String? wsHost,
+    bool Function()? shouldProceed,
     bool reconnect = false,
   }) async {
     sbLog.i(StackTrace.current, 'userId: $userId');
@@ -25,6 +26,7 @@ extension ChatConnection on Chat {
       accessToken: accessToken,
       apiHost: apiHost,
       wsHost: wsHost,
+      shouldProceed: shouldProceed,
     );
   }
 

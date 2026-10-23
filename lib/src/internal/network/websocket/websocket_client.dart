@@ -18,6 +18,7 @@ typedef OnWebSocketConnected = void Function();
 typedef OnWebSocketClosed = void Function();
 typedef OnWebSocketData = Future<void> Function(dynamic data);
 typedef OnWebSocketError = Future<void> Function(Object error);
+typedef OnWebSocketTransportStart = void Function(void Function() connect);
 
 class WebSocketClient {
   WebSocketChannel? _webSocketChannel;
@@ -33,6 +34,9 @@ class WebSocketClient {
   Timer? _pingTimer;
   Timer? _watchdogTimer;
   Timer? _forceCloseTimer; // Timer for force cleanup
+  HttpClient? _handshakeClient;
+  final bool managedReconnect;
+  final WebSocketChannel Function(Uri)? channelFactory;
 
   int? connectedTs;
   dynamic testData;
@@ -51,6 +55,8 @@ class WebSocketClient {
     required OnWebSocketClosed onWebSocketClosed,
     required OnWebSocketData onWebSocketData,
     required OnWebSocketError onWebSocketError,
+    this.managedReconnect = false,
+    this.channelFactory,
   })  : _chat = chat,
         _chatContext = chatContext,
         _onWebSocketConnected = onWebSocketConnected,
@@ -63,9 +69,21 @@ class WebSocketClient {
     String? accessToken,
     String? sessionKey,
     bool reconnect = false,
+    OnWebSocketTransportStart? onTransportStart,
   }) {
     if (url == _url && _isConnected) return;
 
+    void start() => _connect(url: url, accessToken: accessToken,
+        sessionKey: sessionKey, reconnect: reconnect);
+    if (onTransportStart != null) {
+      onTransportStart(start);
+    } else {
+      start();
+    }
+  }
+
+  void _connect({required String url, String? accessToken,
+      String? sessionKey, required bool reconnect}) {
     sbLog.d(StackTrace.current, '[url] $url');
 
     // Wait for any ongoing close operation to complete and clean up if needed
@@ -90,7 +108,10 @@ class WebSocketClient {
     runZonedGuarded(() async {
       Completer? reconnectTimeoutCompleter;
 
-      if (kIsWeb) {
+      final factory = channelFactory;
+      if (factory != null) {
+        _webSocketChannel = factory(Uri.parse(url));
+      } else if (kIsWeb) {
         List<String> protocols = [];
         if (sessionKey != null) {
           protocols.add(
@@ -107,7 +128,7 @@ class WebSocketClient {
           protocols: protocols,
         );
 
-        if (reconnect) {
+        if (reconnect && !managedReconnect) {
           reconnectTimeoutCompleter = Completer();
           reconnectTimeoutCompleter.future.timeout(
               Duration(seconds: _chat.chatContext.options.connectionTimeout),
@@ -130,10 +151,12 @@ class WebSocketClient {
           headers['SENDBIRD-WS-TOKEN'] = accessToken;
         }
 
+        if (managedReconnect) _handshakeClient = HttpClient();
         _webSocketChannel = IOWebSocketChannel.connect(
           Uri.parse(url),
           headers: headers,
-          connectTimeout: reconnect
+          customClient: _handshakeClient,
+          connectTimeout: reconnect && !managedReconnect
               ? Duration(seconds: _chat.chatContext.options.connectionTimeout)
               : null,
         );
@@ -180,6 +203,8 @@ class WebSocketClient {
     int code = WebSocketStatus.normalClosure,
     String reason = '',
   }) async {
+    _handshakeClient?.close(force: true);
+    _handshakeClient = null;
     // Check if already closing or already closed
     WebSocketChannel? channelToClose;
     Completer<bool>? existingCompleter;
@@ -382,6 +407,8 @@ class WebSocketClient {
     _stopPing();
     _stopWatchdog();
     _cancelForceCloseTimer();
+    _handshakeClient?.close(force: true);
+    _handshakeClient = null;
     _isConnected = false;
 
     // Cancel stream subscription before nullifying channel

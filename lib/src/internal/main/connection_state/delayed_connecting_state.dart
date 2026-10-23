@@ -68,6 +68,7 @@ class DelayedConnectingState extends BaseConnectionState {
     String? accessToken,
     String? apiHost,
     String? wsHost,
+    bool Function()? shouldProceed,
   }) async {
     sbLog.i(StackTrace.current, 'userId: $userId');
 

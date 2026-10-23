@@ -21,8 +21,18 @@ class SendbirdChat {
   static SendbirdChat? _defaultInstance;
 
   late Chat _chat;
+  NetworkPathHooks? _networkPathHooks;
+  bool _initialized = false;
+
+  void setNetworkPathHooks(NetworkPathHooks? hooks) {
+    _networkPathHooks = hooks;
+    if (_initialized) _chat.networkPathHooks = hooks;
+  }
 
   Chat get chat => _chat;
+
+  NetworkReconnectAdapter get networkReconnectAdapter =>
+      _chat.connectionManager.networkReconnect;
 
   /// Private constructor
   SendbirdChat._();
@@ -71,7 +81,11 @@ class SendbirdChat {
     bool result = true;
 
     // Chat 객체를 appId와 함께 생성
+    if (_initialized) _chat.connectionManager.networkReconnect.cancelAll();
     _chat = Chat(appId: appId, options: options ?? SendbirdChatOptions());
+    _chat.sdkInstance = this;
+    _chat.networkPathHooks = _networkPathHooks;
+    _initialized = true;
 
     _chat.chatContext.init(
       chat: _chat,
@@ -324,6 +338,7 @@ class SendbirdChat {
     String? accessToken,
     String? apiHost,
     String? wsHost,
+    bool Function()? shouldProceed,
   }) async {
     sbLog.i(StackTrace.current, 'userId: $userId');
 
@@ -333,6 +348,7 @@ class SendbirdChat {
       accessToken: accessToken,
       apiHost: apiHost,
       wsHost: wsHost,
+      shouldProceed: shouldProceed,
     );
   }
 

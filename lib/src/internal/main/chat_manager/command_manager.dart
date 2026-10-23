@@ -53,7 +53,7 @@ class CommandManager {
   // Forces WS close if no ACK comes back within _deadWsDetectionSeconds,
   // which is shorter than webSocketTimeout to reduce reconnect delay.
   final Map<String, Timer> _deadWsTimerMap = {};
-  static const int _deadWsDetectionSeconds = 5;
+  static const int _deadWsDetectionSeconds = 3;
   final Map<String, int> _readMap = {};
   final Map<String, Completer<int?>> messageOffsetTsCompleterMap = {};
   final Map<String, int> _dedupIdMap = {};
@@ -164,6 +164,9 @@ class CommandManager {
       // NOTE: some test cases execute async socket data
       throw ConnectionRequiredException();
     }
+    if (!_chat.connectionManager.webSocketClient.isConnected()) {
+      throw ConnectionRequiredException();
+    }
 
     sbLog.d(
         StackTrace.current, '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
@@ -210,6 +213,11 @@ class CommandManager {
           _deadWsTimerMap.remove(reqId);
           if (_completerMap.containsKey(reqId) &&
               _chat.connectionManager.webSocketClient.isConnected()) {
+            _ackTimerMap.remove(reqId)?.cancel();
+            final completer = _completerMap.remove(reqId);
+            if (completer != null && !completer.isCompleted) {
+              completer.completeError(WebSocketFailedException());
+            }
             sbLog.w(StackTrace.current,
                 'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
             _chat.connectionManager.webSocketClient
@@ -370,6 +378,12 @@ class CommandManager {
     required bool fromWebSocket,
     required Map<String, dynamic> loginPayload,
   }) async {
+    final connection = _chat.connectionManager;
+    final attempt = fromWebSocket ? connection.callbackAttempt : null;
+    final socket = fromWebSocket ? connection.callbackSocket : null;
+    bool isCurrent() => !fromWebSocket ||
+        connection.isCallbackCurrent(attempt, socket);
+    if (!isCurrent()) return;
     final event = LoginEvent.fromJson(loginPayload);
     event.user.set(_chat);
 
@@ -386,6 +400,7 @@ class CommandManager {
     }
 
     await _chat.deviceTokenManager.checkLoginEvent(event);
+    if (!isCurrent()) return;
 
     _chat.chatContext
       ..currentUser = event.user
@@ -399,11 +414,15 @@ class CommandManager {
       ..lastConnectedAt = event.loginTimestamp
       ..reconnectConfig = event.reconnectConfiguration;
 
+    if (attempt != null) {
+      connection.networkReconnect.receivedSessionKey(attempt, event.sessionKey);
+    }
     _chat.sessionManager.setSessionKey(event.sessionKey);
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {
       await _chat.dbManager.setLoginInfo(_chat.chatContext, event.user);
+      if (!isCurrent()) return;
     }
     //- [DBManager]
 
@@ -436,19 +455,24 @@ class CommandManager {
         _chat.chatContext.loginCompleter?.complete(event.user);
         _chat.chatContext.loginCompleter = null;
         await _chat.eventDispatcher.onReconnected(event);
+        if (!isCurrent()) return;
       } else {
         await _chat.eventDispatcher.onLogin(event);
+        if (!isCurrent()) return;
         _chat.chatContext.loginCompleter?.complete(event.user);
         _chat.chatContext.loginCompleter = null;
       }
 
       await _enterEnteredOpenChannels();
+      if (!isCurrent()) return;
 
       if (wasReconnecting) {
         _chat.eventManager.notifyReconnectSucceeded();
       } else {
         _chat.eventManager.notifyConnected(event.user.userId);
       }
+      if (attempt != null) connection.networkReconnect.authenticated(attempt);
+      if (attempt == null) connection.authenticatedSocket();
     } else {
       await _chat.eventDispatcher.onLogin(event);
     }

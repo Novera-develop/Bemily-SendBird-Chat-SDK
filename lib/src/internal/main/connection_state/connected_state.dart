@@ -19,21 +19,25 @@ class ConnectedState extends BaseConnectionState {
     String? accessToken,
     String? apiHost,
     String? wsHost,
+    bool Function()? shouldProceed,
   }) async {
     sbLog.i(StackTrace.current, 'userId: $userId');
-    if (chat.chatContext.currentUserId == userId &&
+    if (chat.connectionManager.networkReconnect.matchesSessionCredentials(userId,
+            accessToken: accessToken, apiHost: apiHost, wsHost: wsHost) &&
         chat.chatContext.currentUser != null &&
         chat.chatContext.services.contains(Service.chat)) {
       return chat.chatContext.currentUser!;
     }
 
     await chat.connectionManager.doDisconnect(clear: true);
+    chat.connectionManager.checkConnectAllowed(shouldProceed);
     return await chat.connectionManager.doConnect(
       userId,
       nickname: nickname,
       accessToken: accessToken,
       apiHost: apiHost,
       wsHost: wsHost,
+      shouldProceed: shouldProceed,
     );
   }
 
