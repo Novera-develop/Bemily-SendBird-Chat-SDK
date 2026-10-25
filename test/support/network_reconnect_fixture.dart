@@ -274,13 +274,14 @@ class _Dispatcher implements EventDispatcher {
   final Chat chat;
   Completer<void>? barrier;
   Completer<void>? disconnectBarrier;
+  Completer<void>? reconnectingBarrier;
   void Function()? onResumed;
   final completedKeys = <NetworkReconnectAttempt?>[];
   _Dispatcher(this.chat);
   @override
   Future<void> onConnecting() async {}
   @override
-  Future<void> onReconnecting() async {}
+  Future<void> onReconnecting() async { await reconnectingBarrier?.future; }
   @override
   Future<void> onDisconnected() async { await disconnectBarrier?.future; }
   @override

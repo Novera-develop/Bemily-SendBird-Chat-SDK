@@ -35,6 +35,8 @@ part 'network_path_credentials_cases.dart';
 part 'network_path_session_ownership_cases.dart';
 part 'network_path_background_recovery_cases.dart';
 
+enum _CancellationPhase { scheduled, dispatcher, session, delayedParameters }
+
 void main() {
   _registerBackgroundRecoveryTests();
   _registerSessionOwnershipTests();
@@ -103,6 +105,105 @@ void main() {
     fixture.dispose();
     await _flush(tester);
   });
+
+  for (final phase in _CancellationPhase.values) {
+    testWidgets('W22 fix6 cancelled reservation releases state at $phase', (tester) async {
+      var allowed = true;
+      final fixture = _Fixture(onLoginInfo: () {
+        if (phase == _CancellationPhase.delayedParameters) allowed = false;
+      });
+      addTearDown(fixture.dispose);
+      final reconnectGate = Completer<void>();
+      final sessionGate = Completer<String?>();
+      if (phase == _CancellationPhase.dispatcher) {
+        fixture.dispatcher.reconnectingBarrier = reconnectGate;
+      }
+      if (phase == _CancellationPhase.session) fixture.sessions.barrier = sessionGate;
+      if (phase == _CancellationPhase.delayedParameters) {
+        fixture.chat.chatContext.currentUser = null;
+        fixture.chat.chatContext.sessionKey = null;
+      }
+      await fixture.connection.doReconnect(reset: true, shouldProceed: () => allowed);
+      final reserved = fixture.adapter.connectionSnapshot;
+      expect(reserved.reconnecting, isTrue);
+      if (phase == _CancellationPhase.scheduled) allowed = false;
+      await _flush(tester);
+      allowed = false;
+      reconnectGate.complete();
+      sessionGate.complete(_userId);
+      await _flush(tester);
+      expect(fixture.starts, _none);
+      expect(fixture.connection.isDisconnected(), isTrue);
+      expect(fixture.adapter.connectionSnapshot.key, reserved.key);
+      expect(fixture.adapter.connectionSnapshot.sequence, reserved.sequence);
+      expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+      expect(fixture.adapter.connectionSnapshot.reconnecting, isFalse);
+      expect(fixture.events.last.kind, NetworkReconnectEventKind.authenticationFailed);
+      expect(fixture.events.last.error, isA<ConnectionCanceledException>());
+      expect(fixture.connection.reconnectTimer, isNull);
+      fixture.dispose();
+      await _flush(tester);
+    });
+  }
+
+  testWidgets('W22 fix6 cancelled reservation preserves authenticated transport', (tester) async {
+    final fixture = _Fixture();
+    await fixture.connection.doReconnect(reset: true);
+    await _flush(tester);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    final current = fixture.adapter.connectionSnapshot;
+    var allowed = true;
+    await fixture.connection.doReconnect(reset: true, shouldProceed: () => allowed);
+    allowed = false;
+    await _flush(tester);
+    expect(fixture.connection.isConnected(), isTrue);
+    expect(fixture.adapter.connectionSnapshot.key, current.key);
+    expect(fixture.adapter.connectionSnapshot.sequence, current.sequence);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    expect(fixture.adapter.connectionSnapshot.reconnecting, isFalse);
+    expect(fixture.starts, _one);
+    fixture.dispose();
+    await _flush(tester);
+  });
+
+  for (final owned in [false, true]) {
+    for (final pending in [false, true]) {
+    testWidgets('W22 fix6 late cancellation preserves replacement owned=$owned pending=$pending', (tester) async {
+      final fixture = _Fixture();
+      final gate = Completer<String?>();
+      fixture.sessions.barrier = gate;
+      var allowed = true;
+      await fixture.connection.doReconnect(reset: true, shouldProceed: () => allowed);
+      await _flush(tester);
+      final nextGate = Completer<String?>();
+      fixture.sessions.barrier = pending ? nextGate : null;
+      final replacement = owned
+          ? fixture.adapter.beginOrJoinReconnect(fixture.key(), fixture.deadline)
+          : fixture.connection.doReconnect(reset: true).then<void>((_) {});
+      await _flush(tester);
+      final current = fixture.adapter.connectionSnapshot;
+      allowed = false;
+      gate.complete(_userId);
+      await _flush(tester);
+      expect(fixture.connection.isReconnecting(), isTrue);
+      expect(fixture.adapter.connectionSnapshot.key, current.key);
+      expect(fixture.adapter.connectionSnapshot.reconnecting, isTrue);
+      expect(fixture.starts, pending ? _none : _one);
+      expect(fixture.events.where((event) =>
+          event.kind == NetworkReconnectEventKind.authenticationFailed), isEmpty);
+      nextGate.complete(_userId);
+      await _flush(tester);
+      expect(fixture.starts, _one);
+      await fixture.sockets.last.login();
+      await _flush(tester);
+      await replacement;
+      expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+      fixture.dispose();
+      await _flush(tester);
+    });
+  }
+  }
 
   testWidgets('installed hooks own online and offline connectivity events',
       (tester) async {

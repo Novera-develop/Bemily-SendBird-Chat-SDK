@@ -528,8 +528,13 @@ class ConnectionManager {
 
     reconnectTimer?.cancel();
     final delay = Duration(seconds: chat.chatContext.reconnectTask!.backOffPeriod);
+    bool canStart() {
+      if (shouldProceed?.call() != false) return true;
+      _cancelScheduledSdkReconnect(socket);
+      return false;
+    }
     Future<void> reconnectAction() async {
-      if (shouldProceed?.call() == false) return;
+      if (!canStart()) return;
       if (!_isSocketStartCurrent(ownedAttempt, socket)) {
         if (identical(socket, _socketIdentity) &&
             _socketShouldProceed?.call() == false) {
@@ -548,8 +553,7 @@ class ConnectionManager {
         if (chat.chatContext.reconnectTask?.retryCount == 1) {
           if (!doNotCallReconnectStartedEvent) {
             await chat.eventDispatcher.onReconnecting();
-            if (shouldProceed?.call() == false ||
-                !_isSocketStartCurrent(ownedAttempt, socket)) return;
+            if (!canStart() || !_isSocketStartCurrent(ownedAttempt, socket)) return;
             chat.eventManager.notifyReconnectStarted();
           }
         }
@@ -565,11 +569,11 @@ class ConnectionManager {
               isDelayedConnecting: true,
               ownedAttempt: ownedAttempt,
               shouldProceed: _socketShouldProceed,
-              shouldStart: shouldProceed,
+              shouldStart: canStart,
             );
           }
         } else {
-          await _reconnect(ownedAttempt: ownedAttempt, shouldProceed: shouldProceed);
+          await _reconnect(ownedAttempt: ownedAttempt, shouldProceed: canStart);
         }
       } catch (error) {
         if (ownedAttempt == null) {

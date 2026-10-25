@@ -122,6 +122,21 @@ extension _NetworkConnection on ConnectionManager {
         (reservation == null || identical(reservation, _sdkReservation));
   }
 
+  void _cancelScheduledSdkReconnect(Object? socket) {
+    final reservation = Zone.current[ConnectionManager._sdkReservationZone];
+    if (reservation is! NetworkSocketAttempt ||
+        !identical(reservation, _sdkReservation) ||
+        !identical(socket, _socketIdentity) || networkReconnect.ownsReconnect) return;
+    _sdkReservation = null;
+    reconnectTimer?.cancel();
+    reconnectTimer = null;
+    _scheduledReconnectAction = null;
+    _scheduledAttempt = null;
+    changeState(_sdkAttempt?.isAuthenticated == true && webSocketClient.isConnected()
+        ? ConnectedState(chat: chat) : DisconnectedState(chat: chat));
+    reservation.closed(error: ConnectionCanceledException());
+  }
+
   void _connectSocket(NetworkReconnectAttempt? key, String url,
       {String? accessToken, String? sessionKey, bool reconnect = false}) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
