@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart' hide EventDispatcher;
 import 'package:sendbird_chat_sdk/sendbird_chat_sdk.dart';
 import 'package:sendbird_chat_sdk/src/internal/db/db.dart';
@@ -32,8 +33,10 @@ part 'support/network_reconnect_fixture.dart';
 part 'network_path_reconnect_lifecycle_cases.dart';
 part 'network_path_credentials_cases.dart';
 part 'network_path_session_ownership_cases.dart';
+part 'network_path_background_recovery_cases.dart';
 
 void main() {
+  _registerBackgroundRecoveryTests();
   _registerSessionOwnershipTests();
   setUp(() async {
     SharedPreferences.setMockInitialValues({});

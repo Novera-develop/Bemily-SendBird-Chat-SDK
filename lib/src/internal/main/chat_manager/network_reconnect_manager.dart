@@ -71,7 +71,9 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
           sequence: previous.sequence, authenticated: authenticated,
           reconnecting: reconnecting);
     }
-    _events.add(event);
+    _events.add(NetworkReconnectEvent(event.kind, event.key,
+        scheduledAt: event.scheduledAt, error: event.error,
+        sequence: previous.key == event.key ? previous.sequence : null));
   }
 
   bool get ownsReconnect => _closingKey != null ||
@@ -382,15 +384,16 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
         Future.error(StateError(_unknownGeneration));
   }
 
-  NetworkSocketAttempt reserveSdkAttempt() => _newSdkAttempt(_nextSdkAttempt);
+  NetworkSocketAttempt reserveSdkAttempt({bool preserveConnection = false}) =>
+      _newSdkAttempt(_nextSdkAttempt, activate: !preserveConnection);
 
   NetworkSocketAttempt createSdkAttempt() => _newSdkAttempt(_nextSdkAttempt++);
 
-  NetworkSocketAttempt _newSdkAttempt(int attempt) {
+  NetworkSocketAttempt _newSdkAttempt(int attempt, {bool activate = true}) {
     final key = NetworkReconnectAttempt(scope: NetworkReconnectAttempt.sdkScope,
           sdkInstance: sdkInstance, generation: _currentGeneration,
           attempt: attempt);
-    _activateConnection(key);
+    if (activate) _activateConnection(key);
     return NetworkSocketAttempt(key, _emit);
   }
 
@@ -462,6 +465,8 @@ class NetworkSocketAttempt {
   bool hasStarted = false;
   bool _authenticated = false;
   bool _terminated = false;
+  bool get isActive => hasStarted && !_terminated;
+  bool get isAuthenticated => _authenticated && !_terminated;
 
   void scheduled(Duration at) => _emit(NetworkReconnectEvent(
       NetworkReconnectEventKind.reconnectScheduled, key, scheduledAt: at));

@@ -387,10 +387,19 @@ class ConnectionManager {
       _sdkReservation = null;
     }
 
+    final disconnectSocket = _socketIdentity;
+    final disconnectAttempt = _sdkAttempt;
+    final disconnectReservation = _sdkReservation;
+    bool supersededBackgroundClose() => fromEnterBackground &&
+        (!identical(disconnectSocket, _socketIdentity) ||
+            !identical(disconnectAttempt, _sdkAttempt) ||
+            !identical(disconnectReservation, _sdkReservation));
+
     // Check
     if (!isDisconnected()) {
       await webSocketClient.close();
     }
+    if (supersededBackgroundClose()) return;
 
     final disconnectedUserId = chat.chatContext.currentUserId ?? '';
 
@@ -425,6 +434,7 @@ class ConnectionManager {
     } else {
       await chat.eventDispatcher.onDisconnected();
     }
+    if (supersededBackgroundClose()) return;
 
     if (fromEnterBackground &&
         !chat.isBackground &&
@@ -462,6 +472,8 @@ class ConnectionManager {
       await networkReconnect.currentFuture;
       return true;
     }
+    if (ownedAttempt == null && isReconnecting() &&
+        _sdkAttempt?.isActive == true && webSocketClient.isConnected()) return true;
     if (ownedAttempt == null && _socketInvalidated) {
       final waitingSocket = _socketIdentity;
       await networkReconnect.transportClosed;

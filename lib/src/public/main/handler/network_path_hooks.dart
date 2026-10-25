@@ -47,12 +47,13 @@ enum NetworkReconnectEventKind {
 
 class NetworkReconnectEvent {
   const NetworkReconnectEvent(this.kind, this.key,
-      {this.scheduledAt, this.error});
+      {this.scheduledAt, this.error, this.sequence});
 
   final NetworkReconnectEventKind kind;
   final NetworkReconnectAttempt key;
   final Duration? scheduledAt;
   final Object? error;
+  final int? sequence;
 }
 
 abstract class NetworkReconnectAdapter {

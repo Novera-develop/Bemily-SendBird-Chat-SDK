@@ -125,10 +125,15 @@ extension _NetworkConnection on ConnectionManager {
   void _connectSocket(NetworkReconnectAttempt? key, String url,
       {String? accessToken, String? sessionKey, bool reconnect = false}) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
+    final previousAttempt = _sdkAttempt;
     webSocketClient.connect(url: url, accessToken: accessToken,
         sessionKey: sessionKey, reconnect: reconnect,
         onTransportStart: (connect) => _startSocketTransport(key, connect));
     if (identical(reservation, _sdkReservation)) _sdkReservation = null;
+    if (key == null && identical(previousAttempt, _sdkAttempt) &&
+        previousAttempt?.isAuthenticated == true && webSocketClient.isConnected()) {
+      changeState(ConnectedState(chat: chat));
+    }
   }
 
   void _startSocketTransport(NetworkReconnectAttempt? key, void Function() connect) {
@@ -158,7 +163,8 @@ extension _NetworkConnection on ConnectionManager {
       networkReconnect.scheduled(key, networkReconnect.now + delay);
       return networkReconnect.schedule(key, delay, action);
     }
-    final attempt = networkReconnect.reserveSdkAttempt();
+    final attempt = networkReconnect.reserveSdkAttempt(preserveConnection:
+        _sdkAttempt?.isActive == true && webSocketClient.isConnected());
     _sdkReservation = attempt;
     attempt.scheduled(networkReconnect.now + delay);
     return Timer(delay, () => runZoned(action,
