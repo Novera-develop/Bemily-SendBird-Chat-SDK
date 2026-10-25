@@ -1,5 +1,5 @@
 abstract class NetworkPathHooks {
-  Future<void> onConnectivityChanged({
+  Future<bool> onConnectivityChanged({
     required Object sdkInstance,
     required bool hasWifi,
     required bool hasCellular,
@@ -58,6 +58,7 @@ class NetworkReconnectEvent {
 abstract class NetworkReconnectAdapter {
   Object get sdkInstance;
   Duration get now;
+  NetworkConnectionSnapshot get connectionSnapshot;
   Stream<NetworkReconnectEvent> get events;
   Future<void> closeWebsocket(NetworkReconnectAttempt key);
   Future<void> beginOrJoinReconnect(
@@ -67,4 +68,15 @@ abstract class NetworkReconnectAdapter {
   void cancelAttempt(NetworkReconnectAttempt key);
   void cancelScope(String scope);
   Future<void> joinGeneration(int generation);
+}
+
+class NetworkConnectionSnapshot {
+  const NetworkConnectionSnapshot({this.key, this.sequence = initialSequence,
+      this.authenticated = false, this.reconnecting = false});
+
+  static const initialSequence = 0;
+  final NetworkReconnectAttempt? key;
+  final int sequence;
+  final bool authenticated;
+  final bool reconnecting;
 }

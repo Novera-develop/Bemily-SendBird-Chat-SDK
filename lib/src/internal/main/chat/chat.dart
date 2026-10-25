@@ -269,14 +269,14 @@ class Chat with WidgetsBindingObserver {
     try {
       final hooks = networkPathHooks;
       if (hooks != null) {
-        await hooks.onConnectivityChanged(
+        final ownsReconnect = await hooks.onConnectivityChanged(
           sdkInstance: sdkInstance,
           hasWifi: results.contains(ConnectivityResult.wifi),
           hasCellular: results.contains(ConnectivityResult.mobile),
           hasVpn: results.contains(ConnectivityResult.vpn),
           isOnline: results.any((result) => result != ConnectivityResult.none),
         );
-        return;
+        if (ownsReconnect) return;
       }
       if (results.contains(ConnectivityResult.mobile) ||
           results.contains(ConnectivityResult.wifi) ||

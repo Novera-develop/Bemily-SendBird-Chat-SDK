@@ -73,6 +73,23 @@ void main() {
     await _flush(tester);
   });
 
+  testWidgets('observing DIRECT hook preserves one SDK reconnect during handover',
+      (tester) async {
+    final fixture = _Fixture();
+    fixture.chat.networkPathHooks = _Hooks(ownsReconnect: false);
+    await fixture.chat.handleConnectivityResults([ConnectivityResult.mobile]);
+    await _flush(tester);
+    expect(fixture.starts, _one);
+    await fixture.chat.handleConnectivityResults([ConnectivityResult.mobile]);
+    await _flush(tester);
+    expect(fixture.starts, _one);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    expect(fixture.authenticated.length, _one);
+    fixture.dispose();
+    await _flush(tester);
+  });
+
   testWidgets('same generation and external reconnect share one authenticated future',
       (tester) async {
     final fixture = _Fixture();
@@ -106,6 +123,26 @@ void main() {
     ]));
     expect(fixture.events.map((event) => event.key), everyElement(key));
     expect(fixture.handler.keys, [key]);
+    fixture.dispose();
+    await _flush(tester);
+  });
+
+  testWidgets('closed owned attempt cannot authenticate again with the same key',
+      (tester) async {
+    final fixture = _Fixture();
+    final key = fixture.key();
+    final connected = fixture.adapter.beginOrJoinReconnect(key, fixture.deadline);
+    await _flush(tester);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    await connected;
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    fixture.sockets.last.closed();
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    fixture.connection.networkReconnect.authenticated(key);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    await _flush(tester);
+    expect(fixture.authenticated.length, _one);
     fixture.dispose();
     await _flush(tester);
   });

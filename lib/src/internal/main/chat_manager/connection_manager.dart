@@ -69,6 +69,7 @@ class ConnectionManager {
   void authenticatedSocket() => _callbackSdkAttempt?.authenticated();
 
   void invalidateSocketCallbacks() {
+    networkReconnect.invalidateConnection(preserveReconnect: true);
     _socketIdentity = Object();
     _socketInvalidated = true;
     changeState(DisconnectedState(chat: chat));
@@ -362,6 +363,7 @@ class ConnectionManager {
     String? messageForDelayedConnectingState,
   }) async {
     if (clear || logout) _socketShouldProceed = null;
+    networkReconnect.invalidateConnection();
     if (logout || clear || networkReconnect.ownsReconnect) {
       networkReconnect.cancelAll();
       _socketIdentity = Object();

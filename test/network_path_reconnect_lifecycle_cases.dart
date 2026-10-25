@@ -1,6 +1,85 @@
 part of 'network_path_reconnect_test.dart';
 
 void registerNetworkReconnectLifecycleTests() {
+  testWidgets('connection snapshot is synchronous and rejects superseded SDK authentication',
+      (tester) async {
+    final fixture = _Fixture();
+    final manager = fixture.connection.networkReconnect;
+    final initial = fixture.adapter.connectionSnapshot;
+    final first = manager.createSdkAttempt();
+    first.started();
+    final connecting = fixture.adapter.connectionSnapshot;
+    expect(connecting.sequence, greaterThan(initial.sequence));
+    expect(connecting.key, first.key);
+    expect(connecting.reconnecting, isTrue);
+    first.authenticated();
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    expect(fixture.adapter.connectionSnapshot.sequence, connecting.sequence);
+    final second = manager.createSdkAttempt();
+    second.started();
+    final newer = fixture.adapter.connectionSnapshot;
+    expect(newer.sequence, greaterThan(connecting.sequence));
+    first.closed();
+    first.authenticated();
+    expect(fixture.adapter.connectionSnapshot.key, second.key);
+    expect(fixture.adapter.connectionSnapshot.reconnecting, isTrue);
+    second.authenticated();
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    second.closed(error: WebSocketFailedException());
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    expect(fixture.adapter.connectionSnapshot.reconnecting, isFalse);
+    second.authenticated();
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    final superseded = manager.createSdkAttempt();
+    superseded.started();
+    final current = manager.createSdkAttempt();
+    current.started();
+    superseded.authenticated();
+    expect(fixture.adapter.connectionSnapshot.key, current.key);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    expect(fixture.adapter.connectionSnapshot.reconnecting, isTrue);
+    fixture.dispose();
+    await _flush(tester);
+  });
+
+  testWidgets('owned connection snapshot advances and explicit disconnect invalidates immediately',
+      (tester) async {
+    final fixture = _Fixture();
+    final key = fixture.key();
+    final first = fixture.adapter.beginOrJoinReconnect(key, fixture.deadline);
+    final pending = fixture.adapter.connectionSnapshot;
+    expect(pending.key, key);
+    expect(pending.reconnecting, isTrue);
+    await _flush(tester);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    await first;
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    expect(fixture.adapter.connectionSnapshot.sequence, pending.sequence);
+    final disconnect = fixture.connection.disconnect(logout: false);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    await disconnect;
+    fixture.dispose();
+    await _flush(tester);
+  });
+
+  for (final logout in _hookModes) {
+  testWidgets('SDK connection snapshot is invalidated before explicit disconnect awaits logout=$logout',
+      (tester) async {
+    final fixture = _Fixture();
+    await fixture.connection.reconnectForNetworkChange();
+    await _flush(tester);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isTrue);
+    final disconnect = fixture.connection.disconnect(logout: logout);
+    expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
+    await disconnect;
+    fixture.dispose();
+    await _flush(tester);
+  });
+  }
+
   testWidgets('superseded SDK reservation cannot replace a newer transport after an await',
       (tester) async {
     final fixture = _Fixture(useTransport: true);

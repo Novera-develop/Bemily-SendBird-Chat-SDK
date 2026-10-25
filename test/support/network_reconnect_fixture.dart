@@ -336,13 +336,15 @@ class _Sessions implements SessionManager {
 }
 
 class _Hooks implements NetworkPathHooks {
+  _Hooks({this.ownsReconnect = true});
+  final bool ownsReconnect;
   final instances = <Object>[];
   final online = <bool>[];
   final wifi = <bool>[];
   final cellular = <bool>[];
   final vpn = <bool>[];
   @override
-  Future<void> onConnectivityChanged({required Object sdkInstance,
+  Future<bool> onConnectivityChanged({required Object sdkInstance,
       required bool hasWifi, required bool hasCellular, required bool hasVpn,
       required bool isOnline}) async {
     instances.add(sdkInstance);
@@ -350,6 +352,7 @@ class _Hooks implements NetworkPathHooks {
     wifi.add(hasWifi);
     cellular.add(hasCellular);
     vpn.add(hasVpn);
+    return ownsReconnect;
   }
 }
 

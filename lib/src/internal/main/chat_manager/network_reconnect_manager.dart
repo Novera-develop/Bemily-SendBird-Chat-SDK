@@ -12,6 +12,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
 
   static const _retainedGenerations = 2;
   static const _initialGeneration = 0;
+  static const _sequenceIncrement = 1;
   static const _cancelledScopeLimit = 4096;
   static const _closeBudget = Duration(milliseconds: 500);
   static const _invalidKey = 'Reconnect attempt does not belong to this lease';
@@ -35,6 +36,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
   NetworkReconnectAttempt? _closingKey;
   Future<void> _transportClosed = Future.value();
   Timer? _deadlineTimer;
+  NetworkConnectionSnapshot _connectionSnapshot = const NetworkConnectionSnapshot();
 
   @override
   Object get sdkInstance => connection.chat.sdkInstance;
@@ -42,6 +44,35 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
   Duration get now => _clock?.call() ?? _stopwatch.elapsed;
   @override
   Stream<NetworkReconnectEvent> get events => _events.stream;
+  @override
+  NetworkConnectionSnapshot get connectionSnapshot => _connectionSnapshot;
+
+  void _activateConnection(NetworkReconnectAttempt key) {
+    if (_connectionSnapshot.key == key) return;
+    _connectionSnapshot = NetworkConnectionSnapshot(key: key,
+        sequence: _connectionSnapshot.sequence + _sequenceIncrement,
+        reconnecting: true);
+  }
+
+  void invalidateConnection({bool preserveReconnect = false}) {
+    final previous = _connectionSnapshot;
+    _connectionSnapshot = NetworkConnectionSnapshot(key: previous.key,
+        sequence: previous.sequence,
+        reconnecting: preserveReconnect && previous.reconnecting);
+  }
+
+  void _emit(NetworkReconnectEvent event) {
+    final previous = _connectionSnapshot;
+    if (previous.key == event.key) {
+      final authenticated = event.kind == NetworkReconnectEventKind.authenticated;
+      final reconnecting = event.kind == NetworkReconnectEventKind.reconnectScheduled ||
+          event.kind == NetworkReconnectEventKind.reconnectStarted;
+      _connectionSnapshot = NetworkConnectionSnapshot(key: event.key,
+          sequence: previous.sequence, authenticated: authenticated,
+          reconnecting: reconnecting);
+    }
+    _events.add(event);
+  }
 
   bool get ownsReconnect => _closingKey != null ||
       (_lease != null &&
@@ -110,7 +141,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
       if (_cancelledScopes.contains(key.scope) || _closingKey != key) {
         throw ConnectionCanceledException();
       }
-      _events.add(NetworkReconnectEvent(
+      _emit(NetworkReconnectEvent(
           NetworkReconnectEventKind.websocketClosed, key));
     }, onError: (Object error, StackTrace stack) {
       fail(key, error);
@@ -169,6 +200,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     _latestGeneration = key.generation;
     _leases[key.generation] = lease;
     _lease = lease;
+    _activateConnection(key);
     while (_leases.length > _retainedGenerations) {
       final generation = _leases.keys.first;
       _leases.remove(generation);
@@ -270,6 +302,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     final attempt = _ReconnectAttempt(key, deadline)..started = true;
     _recoveryScope = null;
     lease.current = attempt;
+    _activateConnection(key);
     lease.releasedFuture = null;
     lease.attempts[key.attempt] = attempt;
     _armDeadline(attempt);
@@ -293,6 +326,10 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     }
     attempt.authenticated = false;
     attempt.cancelled = true;
+    if (_connectionSnapshot.key == key) {
+      _connectionSnapshot = NetworkConnectionSnapshot(key: key,
+          sequence: _connectionSnapshot.sequence);
+    }
     if (!attempt.completer.isCompleted) {
       attempt.completer.completeError(ConnectionCanceledException());
     }
@@ -349,21 +386,24 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
 
   NetworkSocketAttempt createSdkAttempt() => _newSdkAttempt(_nextSdkAttempt++);
 
-  NetworkSocketAttempt _newSdkAttempt(int attempt) => NetworkSocketAttempt(
-      NetworkReconnectAttempt(scope: NetworkReconnectAttempt.sdkScope,
+  NetworkSocketAttempt _newSdkAttempt(int attempt) {
+    final key = NetworkReconnectAttempt(scope: NetworkReconnectAttempt.sdkScope,
           sdkInstance: sdkInstance, generation: _currentGeneration,
-          attempt: attempt), _events.add);
+          attempt: attempt);
+    _activateConnection(key);
+    return NetworkSocketAttempt(key, _emit);
+  }
 
   void scheduled(NetworkReconnectAttempt key, Duration at) {
     if (isCurrent(key)) {
-      _events.add(NetworkReconnectEvent(
+      _emit(NetworkReconnectEvent(
           NetworkReconnectEventKind.reconnectScheduled, key, scheduledAt: at));
     }
   }
 
   void started(NetworkReconnectAttempt key) {
     if (isCurrent(key)) {
-      _events.add(NetworkReconnectEvent(
+      _emit(NetworkReconnectEvent(
           NetworkReconnectEventKind.reconnectStarted, key));
     }
   }
@@ -373,7 +413,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     final lease = _lease!;
     final wasAuthenticated = lease.current.authenticated;
     final failure = error ?? WebSocketFailedException();
-    _events.add(NetworkReconnectEvent(
+    _emit(NetworkReconnectEvent(
         NetworkReconnectEventKind.websocketClosed, key));
     fail(key, failure);
     return wasAuthenticated;
@@ -396,7 +436,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     if (attempt.completer.isCompleted) return;
     attempt.authenticated = true;
     _deadlineTimer?.cancel();
-    _events.add(NetworkReconnectEvent(
+    _emit(NetworkReconnectEvent(
         NetworkReconnectEventKind.authenticated, key));
     attempt.completer.complete();
   }
@@ -406,7 +446,7 @@ class NetworkReconnectManager implements NetworkReconnectAdapter {
     if (attempt == null || attempt.key != key || attempt.cancelled) return;
     final wasAuthenticated = attempt.authenticated;
     if (wasAuthenticated) _releaseLease(_lease!, error);
-    _events.add(NetworkReconnectEvent(
+    _emit(NetworkReconnectEvent(
         NetworkReconnectEventKind.authenticationFailed, key, error: error));
     attempt.authenticated = false;
     if (!attempt.completer.isCompleted) attempt.completer.completeError(error);
