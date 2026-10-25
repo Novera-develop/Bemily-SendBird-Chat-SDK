@@ -45,6 +45,65 @@ void main() {
         options: SendbirdChatOptions(useCollectionCaching: false));
   });
 
+  for (final guardOnly in [false, true]) {
+    testWidgets('W22 fix5 reconnect close gate cancels guardOnly=$guardOnly', (tester) async {
+      final fixture = _Fixture();
+      final gate = Completer<bool>();
+      fixture.sockets.single.closeBarrier = gate;
+      var foreground = true;
+      final pending = fixture.connection.reconnectForNetworkChange(
+          shouldProceed: () => foreground);
+      await _flush(tester);
+      Future<void>? paused;
+      if (guardOnly) {
+        foreground = false;
+      } else {
+        paused = fixture.chat.didChangeAppLifecycleState(AppLifecycleState.paused);
+        await _flush(tester);
+      }
+      gate.complete(true);
+      await pending;
+      await paused;
+      await _flush(tester);
+      expect(fixture.starts, _none);
+      fixture.sockets.single.closeBarrier = null;
+      foreground = true;
+      await fixture.chat.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await fixture.connection.reconnectForNetworkChange(shouldProceed: () => foreground);
+      await _flush(tester);
+      expect(fixture.starts, _one);
+      await fixture.sockets.last.login();
+      await _flush(tester);
+      expect(fixture.connection.isConnected(), isTrue);
+      fixture.dispose();
+      await _flush(tester);
+    });
+  }
+
+  testWidgets('W22 fix5 reconnect session wait keeps foreground cancellation', (tester) async {
+    final fixture = _Fixture();
+    final gate = Completer<String?>();
+    fixture.sessions.barrier = gate;
+    var foreground = true;
+    await fixture.connection.reconnectForNetworkChange(shouldProceed: () => foreground);
+    await _flush(tester);
+    expect(fixture.starts, _none);
+    foreground = false;
+    gate.complete(_userId);
+    await _flush(tester);
+    expect(fixture.starts, _none);
+    fixture.sessions.barrier = null;
+    foreground = true;
+    await fixture.connection.reconnectForNetworkChange(shouldProceed: () => foreground);
+    await _flush(tester);
+    expect(fixture.starts, _one);
+    await fixture.sockets.last.login();
+    await _flush(tester);
+    expect(fixture.connection.isConnected(), isTrue);
+    fixture.dispose();
+    await _flush(tester);
+  });
+
   testWidgets('installed hooks own online and offline connectivity events',
       (tester) async {
     final fixture = _Fixture();
