@@ -1,6 +1,8 @@
 // Copyright (c) 2023 Sendbird, Inc. All rights reserved.
 
 import 'dart:async';
+import 'dart:io' as io;
+import 'package:http/http.dart' as http;
 
 import 'package:sendbird_chat_sdk/src/internal/main/chat_context/chat_context.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/session_manager.dart';
@@ -145,7 +147,9 @@ class ApiClient {
       } else {
         final exception = e is TimeoutException
             ? NetworkErrorException(message: e.toString())
-            : RequestFailedException(message: e.toString());
+            : RequestFailedException(message: e.toString(),
+                isTransientTransport: e is io.SocketException || e is io.HttpException ||
+                    e is http.ClientException);
 
         _statManager?.endApiResultStat(
           endpoint: uri.toString(),

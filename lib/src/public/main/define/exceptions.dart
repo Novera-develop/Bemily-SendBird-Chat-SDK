@@ -68,7 +68,8 @@ class WebSocketFailedException extends SendbirdException {
 
 /// RequestFailedException
 class RequestFailedException extends SendbirdException {
-  RequestFailedException({int? code, String? message})
+  final bool isTransientTransport;
+  RequestFailedException({int? code, String? message, this.isTransientTransport = false})
       : super(
             name: (RequestFailedException).toString(),
             code: code ?? SendbirdError.requestFailed,

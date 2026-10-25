@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sendbird_chat_sdk/sendbird_chat_sdk.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat/chat.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_context/chat_context.dart';
@@ -21,8 +22,27 @@ const _untilDetection = Duration(milliseconds: 100);
 const _detectionTime = Duration(seconds: 3);
 const _requestOffset = Duration(seconds: 1);
 const _afterTimeout = Duration(seconds: 31);
+const _reservedRoom = 'reserved-room';
+const _reservedText = 'reserved-text';
 
 void main() {
+  testWidgets('W20 reserved request survives synchronous send failure', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await SharedPreferences.getInstance();
+    await SendbirdChat().init(appId: _reservedRoom,
+        options: SendbirdChatOptions(useCollectionCaching: false));
+    final chat = SendbirdChat().chat;
+    final channel = OpenChannel(channelUrl: _reservedRoom,
+        participantCount: _zeroCalls, operators: [])..set(chat);
+    final params = UserMessageCreateParams(message: _reservedText);
+    params.requestId = _requestId;
+    final pending = channel.sendUserMessage(params);
+    expect(pending.requestId, _requestId);
+    expect(pending.sendingStatus, SendingStatus.failed);
+    expect(params.requestId, isNull);
+    final retryParams = UserMessageCreateParams.withMessage(pending);
+    expect(retryParams.requestId, isNull);
+  });
   testWidgets('disconnected send fails before sending or registering ACK timers',
       (tester) async {
     final fixture = _Fixture(connected: false);

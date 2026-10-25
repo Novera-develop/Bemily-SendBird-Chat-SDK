@@ -68,14 +68,16 @@ extension BaseChannelMessage on BaseChannel {
     sbLog.i(StackTrace.current, 'message: ${params.message}');
     checkUnsupportedAction();
 
-    if (params.message.isEmpty) {
+    if (params.message.isEmpty || params.requestId?.isEmpty == true) {
       throw InvalidParameterException();
     }
 
+    final reservedRequestId = params.requestId;
+    params.requestId = null;
     final cmd = Command.buildUserMessage(
       channelUrl,
       params,
-      const Uuid().v4(),
+      reservedRequestId ?? const Uuid().v4(),
     );
 
     final pendingUserMessage =

@@ -7,6 +7,7 @@ import 'package:sendbird_chat_sdk/src/public/main/params/message/base_message_cr
 
 /// Represents a user message params.
 class UserMessageCreateParams extends BaseMessageCreateParams {
+  String? requestId;
   /// The message text of the message. Defaults to an empty string.
   String message;
 
