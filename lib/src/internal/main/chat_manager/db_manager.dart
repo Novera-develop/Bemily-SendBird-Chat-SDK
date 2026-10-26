@@ -300,6 +300,14 @@ class DBManager {
     }
   }
 
+  Future<void> updateGroupChannelReadStatus(GroupChannel channel,
+      {required bool Function() shouldPersist}) async {
+    if (isEnabled()) {
+      await getDB().updateGroupChannelReadStatus(channel,
+          shouldPersist: shouldPersist);
+    }
+  }
+
   Future<List<GroupChannel>> getGroupChannels({
     required GroupChannelListQuery query,
     int? offset,

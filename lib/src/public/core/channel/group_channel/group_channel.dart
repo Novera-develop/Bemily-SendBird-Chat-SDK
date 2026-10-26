@@ -99,6 +99,9 @@ part 'package:sendbird_chat_sdk/src/internal/main/extensions/group_channel_exten
 /// Represents a group channel.
 @JsonSerializable()
 class GroupChannel extends BaseChannel {
+  static const _fallbackRefreshBackoff = Duration(seconds: 5);
+  Stopwatch? _fallbackRefreshClock;
+
   /// The last message of the channel.
   @JsonKey(fromJson: toNullableBaseMessage)
   BaseMessage? lastMessage;
@@ -287,7 +290,11 @@ class GroupChannel extends BaseChannel {
 
     GroupChannel? channel =
         chat.channelCache.find<GroupChannel>(channelKey: channelUrl);
-    if (channel != null && !channel.dirty) {
+    final fallbackElapsed = channel?._fallbackRefreshClock?.elapsed;
+    if (channel != null &&
+        (!channel.dirty ||
+            (fallbackElapsed != null &&
+                fallbackElapsed < _fallbackRefreshBackoff))) {
       channel.fromCache = true;
       return channel;
     }
@@ -301,8 +308,16 @@ class GroupChannel extends BaseChannel {
         if (chat.currentUser != null) {
           final channel = await chat.dbManager.getGroupChannel(channelUrl);
           if (channel != null) {
-            channel.fromCache = true;
-            return channel;
+            final cached =
+                chat.channelCache.find<GroupChannel>(channelKey: channelUrl);
+            final fallback = cached ?? channel;
+            fallback.fromCache = true;
+            if (cached == null || cached.dirty) {
+              fallback.dirty = true;
+              fallback._fallbackRefreshClock = Stopwatch()..start();
+              fallback.saveToCache(chat);
+            }
+            return fallback;
           }
         }
       }
@@ -573,6 +588,7 @@ class GroupChannel extends BaseChannel {
   void copyWith(dynamic other) {
     super.copyWith(other);
     if (other is GroupChannel) {
+      _fallbackRefreshClock = other._fallbackRefreshClock;
       lastMessage = other.lastMessage;
       isSuper = other.isSuper;
       isBroadcast = other.isBroadcast;

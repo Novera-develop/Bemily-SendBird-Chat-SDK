@@ -155,40 +155,56 @@ class CBaseMessage extends CRootMessage {
   }
 
   static Future<void> upsert(Chat chat, Isar isar, BaseMessage message) async {
-    // BaseMessage
-    await chat.dbManager.write(() async {
-      await _upsert(chat, isar, message);
-    });
+    final persist = prepareUpsert(isar, message);
+    await chat.dbManager.write(persist);
   }
 
-  static Future<void> _upsert(Chat chat, Isar isar, BaseMessage message) async {
+  static Future<void> Function() prepareUpsert(Isar isar, BaseMessage message,
+      {Map<String, CUser>? users}) {
+    final userRows = users ?? <String, CUser>{};
+    final writes = <Future<void> Function()>[];
     if (message is UserMessage) {
-      await isar.cUserMessages.put(CUserMessage.fromUserMessage(message));
+      final row = CUserMessage.fromUserMessage(message);
+      writes.add(() async { await isar.cUserMessages.put(row); });
     } else if (message is FileMessage) {
-      await isar.cFileMessages.put(CFileMessage.fromFileMessage(message));
+      final row = CFileMessage.fromFileMessage(message);
+      writes.add(() async { await isar.cFileMessages.put(row); });
     } else if (message is MultipleFilesMessage) {
-      await isar.cMultipleFilesMessages
-          .put(CMultipleFilesMessage.fromMultipleFilesMessage(message));
+      final row = CMultipleFilesMessage.fromMultipleFilesMessage(message);
+      writes.add(() async { await isar.cMultipleFilesMessages.put(row); });
     } else if (message is AdminMessage) {
-      await isar.cAdminMessages.put(CAdminMessage.fromAdminMessage(message));
+      final row = CAdminMessage.fromAdminMessage(message);
+      writes.add(() async { await isar.cAdminMessages.put(row); });
     }
 
     // parentMessage
     if (message.parentMessage != null) {
-      await _upsert(chat, isar, message.parentMessage!);
+      writes.add(prepareUpsert(isar, message.parentMessage!, users: userRows));
     }
 
     // threadInfo
     if (message.threadInfo != null) {
       for (final user in message.threadInfo!.mostRepliesUsers) {
-        await isar.cUsers.put(CUser.fromUser(user));
+        final row = CUser.fromUser(user);
+        userRows[row.userId] = row;
       }
     }
 
     // sender
     if (message.sender != null) {
-      await isar.cUsers.put(CUser.fromUser(message.sender!));
+      final row = CUser.fromUser(message.sender!);
+      userRows[row.userId] = row;
     }
+    return () async {
+      for (final write in writes) {
+        await write();
+      }
+      if (users == null) {
+        for (final user in userRows.values) {
+          await CUser.putIfChanged(isar, user);
+        }
+      }
+    };
   }
 }
 

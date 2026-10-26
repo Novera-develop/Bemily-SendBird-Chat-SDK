@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 
+import 'package:collection/collection.dart';
 import 'package:isar_community/isar.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat/chat.dart';
 import 'package:sendbird_chat_sdk/src/public/core/user/user.dart';
@@ -45,7 +46,7 @@ class CUser {
     connectionStatus = user.connectionStatus;
     lastSeenAt = user.lastSeenAt;
     isActive = user.isActive;
-    preferredLanguages = user.preferredLanguages;
+    preferredLanguages = user.preferredLanguages?.toList();
     friendDiscoveryKey = user.friendDiscoveryKey;
     friendName = user.friendName;
     metaData = jsonEncode(user.metaData);
@@ -96,6 +97,19 @@ class CUser {
     final cUser = await isar.cUsers.where().userIdEqualTo(userId).findFirst();
     return cUser;
   }
+
+  static Future<void> putIfChanged(Isar isar, CUser user) async {
+    final stored = await isar.cUsers.where().userIdEqualTo(user.userId).findFirst();
+    if (stored == null ||
+        !const DeepCollectionEquality().equals(stored._values, user._values)) {
+      await isar.cUsers.put(user);
+    }
+  }
+
+  List<Object?> get _values => [
+        userId, nickname, profileUrl, connectionStatus, lastSeenAt, isActive,
+        preferredLanguages, friendDiscoveryKey, friendName, metaData, requireAuth,
+      ];
 
   static Future<void> delete(Chat chat, Isar isar, String userId) async {
     await chat.dbManager.write(() async {

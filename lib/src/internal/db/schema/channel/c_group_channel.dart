@@ -114,7 +114,7 @@ class CGroupChannel extends CBaseChannel {
       ..myLastRead = channel.myLastRead
       ..messageOffsetTimestamp = channel.messageOffsetTimestamp
       ..messageSurvivalSeconds = channel.messageSurvivalSeconds
-      ..pinnedMessageIds = channel.pinnedMessageIds
+      ..pinnedMessageIds = List.of(channel.pinnedMessageIds)
       ..lastPinnedMessageType =
           channel.lastPinnedMessage?.messageType ?? MessageType.user
       ..lastPinnedMessageRootId = channel.lastPinnedMessage?.rootId
@@ -188,41 +188,79 @@ class CGroupChannel extends CBaseChannel {
     return groupChannel;
   }
 
-  static Future<CGroupChannel> upsert(
-      Chat chat, Isar isar, GroupChannel channel) async {
-    final cGroupChannel = CGroupChannel.fromGroupChannel(channel);
+  static Future<void> Function() prepareReadStatusUpdate(
+      Isar isar, GroupChannel channel, bool Function() shouldPersist) {
+    final channelUrl = channel.channelUrl;
+    final readStatus = Map<String, int>.of(channel.getCachedReadStatus(channelUrl));
+    final initialRow = CGroupChannel.fromGroupChannel(channel);
+    return () async {
+      if (!shouldPersist() || readStatus.isEmpty) return;
+      final storedRow = await isar.cGroupChannels
+          .where()
+          .channelUrlEqualTo(channelUrl)
+          .findFirst();
+      if (!shouldPersist()) return;
+      final row = storedRow ?? initialRow;
+      row.readStatus = jsonEncode({
+        ...jsonDecode(row.readStatus) as Map<String, dynamic>,
+        ...readStatus,
+      });
+      await isar.cGroupChannels.put(row);
+    };
+  }
 
-    // GroupChannel
-    await chat.dbManager.write(() async {
-      await isar.cGroupChannels.put(cGroupChannel);
-    });
-
-    // lastMessage
-    if (channel.lastMessage != null) {
-      await CBaseMessage.upsert(chat, isar, channel.lastMessage!);
+  static GroupChannelPersistence prepareUpsert(Isar isar, GroupChannel channel) {
+    final row = CGroupChannel.fromGroupChannel(channel);
+    final users = <String, CUser>{};
+    final messages = <Future<void> Function()>[
+      if (channel.lastMessage != null)
+        CBaseMessage.prepareUpsert(isar, channel.lastMessage!, users: users),
+    ];
+    for (final user in [
+      ...channel.members,
+      if (channel.creator != null) channel.creator!,
+      if (channel.inviter != null) channel.inviter!,
+    ]) {
+      users[user.userId] = CUser.fromUser(user);
     }
-
-    // members
-    for (final member in channel.members) {
-      await CUser.upsert(chat, isar, member);
-    }
-
-    // creator
-    if (channel.creator != null) {
-      await CUser.upsert(chat, isar, channel.creator!);
-    }
-
-    // inviter
-    if (channel.inviter != null) {
-      await CUser.upsert(chat, isar, channel.inviter!);
-    }
-
-    // lastPinnedMessage
     if (channel.lastPinnedMessage != null) {
-      await CBaseMessage.upsert(chat, isar, channel.lastPinnedMessage!);
+      messages.add(CBaseMessage.prepareUpsert(isar, channel.lastPinnedMessage!,
+          users: users));
     }
+    final signature = jsonEncode([
+      channel.toJson(), row.metaData, row.readStatus, row.deliveryStatus,
+      row.fromCache, row.dirty, row.pinnedMessageUpdatedAt,
+      _scheduledMessageState(channel.lastMessage),
+      _scheduledMessageState(channel.lastPinnedMessage),
+      for (final user in users.values) user.requireAuth,
+      for (final member in [
+        ...row.members,
+        if (row.inviter != null) row.inviter!,
+      ])
+        [
+          member.restrictionInfo?.description,
+          member.restrictionInfo?.endAt,
+          member.restrictionInfo?.restrictionType.name,
+        ],
+    ]);
+    return GroupChannelPersistence(signature, () async {
+      await isar.cGroupChannels.put(row);
+      for (final persist in messages) {
+        await persist();
+      }
+      for (final user in users.values) {
+        await CUser.putIfChanged(isar, user);
+      }
+    });
+  }
 
-    return cGroupChannel;
+  static List<Object?>? _scheduledMessageState(BaseMessage? message) {
+    if (message == null) return null;
+    final info = message.scheduledInfo;
+    return [
+      info?.scheduledMessageId, info?.scheduledAt, info?.scheduledStatus.name,
+      _scheduledMessageState(message.parentMessage),
+    ];
   }
 
   static Future<GroupChannel?> get(
@@ -563,4 +601,11 @@ class CGroupChannel extends CBaseChannel {
       await isar.cGroupChannels.deleteByChannelUrl(channelUrl);
     });
   }
+}
+
+class GroupChannelPersistence {
+  final String signature;
+  final Future<void> Function() persist;
+
+  GroupChannelPersistence(this.signature, this.persist);
 }

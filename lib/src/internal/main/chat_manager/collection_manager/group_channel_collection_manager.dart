@@ -23,6 +23,9 @@ extension GroupChannelCollectionManager on CollectionManager {
 // Clean up
 //------------------------------//
   void cleanUpGroupChannelCollections() {
+    for (final channelUrl in _pendingReadCheckpoints.keys.toList()) {
+      _cancelReadCheckpoint(channelUrl);
+    }
     for (final channelCollection in groupChannelCollections) {
       channelCollection.cleanUp();
     }
@@ -119,8 +122,21 @@ extension GroupChannelCollectionManager on CollectionManager {
     sbLog.d(StackTrace.current, eventSource.toString());
 
     //+ [DBManager]
-    if (_chat.dbManager.isEnabled()) {
+    if (_chat.dbManager.isEnabled() &&
+        (eventSource == CollectionEventSource.eventUserMarkedRead ||
+            eventSource == CollectionEventSource.eventUserMarkedUnread) &&
+        !_isLocalReadCheckpoint(eventSource, eventDetail)) {
+      for (final channel in updatedChannels ?? <GroupChannel>[]) {
+        _queueReadCheckpoint(channel);
+      }
+    }
+    if (_chat.dbManager.isEnabled() &&
+        (!_isTransientChannelEvent(eventSource) ||
+            _isLocalReadCheckpoint(eventSource, eventDetail))) {
       if (deletedChannelUrls != null) {
+        for (final channelUrl in deletedChannelUrls) {
+          _cancelReadCheckpoint(channelUrl);
+        }
         await _chat.dbManager.deleteGroupChannels(deletedChannelUrls);
       }
       if (addedChannels != null) {
@@ -133,6 +149,9 @@ extension GroupChannelCollectionManager on CollectionManager {
         }
       }
       if (updatedChannels != null) {
+        for (final channel in updatedChannels) {
+          _cancelReadCheckpoint(channel.channelUrl);
+        }
         await _chat.dbManager.upsertGroupChannels(updatedChannels);
       }
     }
@@ -197,10 +216,6 @@ extension GroupChannelCollectionManager on CollectionManager {
           }
           await _chat.dbManager.upsertGroupChannels(addedChannels);
         }
-      }
-      if (updatedChannels != null) {
-        // Not used
-        await _chat.dbManager.upsertGroupChannels(updatedChannels);
       }
     }
     //- [DBManager]

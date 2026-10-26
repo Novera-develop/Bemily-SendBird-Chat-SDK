@@ -25,6 +25,74 @@ class CollectionManager {
 
   final Chat _chat;
 
+  bool _isTransientChannelEvent(CollectionEventSource eventSource) =>
+      eventSource == CollectionEventSource.eventTypingStatusUpdated ||
+      // ignore: deprecated_member_use_from_same_package
+      eventSource == CollectionEventSource.eventReadStatusUpdated ||
+      eventSource == CollectionEventSource.eventUserMarkedRead ||
+      eventSource == CollectionEventSource.eventUserMarkedUnread ||
+      eventSource == CollectionEventSource.eventDeliveryStatusUpdated;
+
+  bool _isLocalReadCheckpoint(CollectionEventSource eventSource, dynamic detail) =>
+      (eventSource == CollectionEventSource.eventUserMarkedRead ||
+          eventSource == CollectionEventSource.eventUserMarkedUnread) &&
+      detail is List<String> &&
+      detail.contains(_chat.chatContext.currentUserId);
+
+  static const Duration _readCheckpointWindow = Duration(milliseconds: 100);
+  static const Duration _readCheckpointCloseTimeout = Duration(seconds: 2);
+  final Map<String, GroupChannel> _pendingReadCheckpoints = {};
+  final Map<String, Timer> _readCheckpointTimers = {};
+  final Set<Future<void>> _readCheckpointWrites = {};
+  Object _readCheckpointGeneration = Object();
+  bool _acceptReadCheckpoints = true;
+
+  void _queueReadCheckpoint(GroupChannel channel) {
+    if (!_acceptReadCheckpoints) return;
+    final channelUrl = channel.channelUrl;
+    _pendingReadCheckpoints[channelUrl] = channel;
+    _readCheckpointTimers.putIfAbsent(channelUrl, () {
+      return Timer(_readCheckpointWindow, () {
+        _flushReadCheckpoint(channelUrl);
+      });
+    });
+  }
+
+  void _cancelReadCheckpoint(String channelUrl) {
+    _readCheckpointTimers.remove(channelUrl)?.cancel();
+    _pendingReadCheckpoints.remove(channelUrl);
+  }
+
+  Future<void> _flushReadCheckpoint(String channelUrl) async {
+    final channel = _pendingReadCheckpoints[channelUrl];
+    _cancelReadCheckpoint(channelUrl);
+    if (channel == null || !_chat.dbManager.isEnabled()) return;
+    final generation = _readCheckpointGeneration;
+    final pending = _chat.dbManager.updateGroupChannelReadStatus(channel,
+        shouldPersist: () => identical(generation, _readCheckpointGeneration));
+    _readCheckpointWrites.add(pending);
+    try {
+      await pending;
+    } catch (error, stack) {
+      sbLog.e(stack, error.toString());
+    } finally {
+      _readCheckpointWrites.remove(pending);
+    }
+  }
+
+  Future<void> resetReadCheckpoints({bool dispose = false}) async {
+    _acceptReadCheckpoints = false;
+    try {
+      await _flushReadCheckpoints();
+    } finally {
+      _readCheckpointGeneration = Object();
+      for (final channelUrl in _pendingReadCheckpoints.keys.toList()) {
+        _cancelReadCheckpoint(channelUrl);
+      }
+      _acceptReadCheckpoints = !dispose;
+    }
+  }
+
   // GroupChannelCollection
   final List<GroupChannelCollection> groupChannelCollections = [];
   int lastRequestTsForGroupChannelChangeLogs = 0;
@@ -131,6 +199,19 @@ class CollectionManager {
     sbLog.d(StackTrace.current);
 
     AutoResendManager().stopAutoResend(_chat);
+    await _flushReadCheckpoints();
+  }
+
+  Future<void> _flushReadCheckpoints() async {
+    try {
+      await Future.wait([
+        ..._readCheckpointWrites,
+        for (final channelUrl in _pendingReadCheckpoints.keys.toList())
+          _flushReadCheckpoint(channelUrl),
+      ]).timeout(_readCheckpointCloseTimeout);
+    } catch (error, stack) {
+      sbLog.e(stack, error.toString());
+    }
   }
 
   Future<void> onReconnected(LoginEvent event) async {
@@ -647,6 +728,9 @@ class InternalGroupChannelHandlerForCollectionManager
   @override
   void onReactionUpdated(BaseChannel channel, ReactionEvent event) async {
     if (channel is GroupChannel) {
+      for (final message in [channel.lastMessage, channel.lastPinnedMessage]) {
+        message?.applyReactionEvent(event);
+      }
       for (final messageCollection
           in _collectionManager.baseMessageCollections) {
         if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {
@@ -674,6 +758,9 @@ class InternalGroupChannelHandlerForCollectionManager
   void onThreadInfoUpdated(
       BaseChannel channel, ThreadInfoUpdateEvent event) async {
     if (channel is GroupChannel) {
+      for (final message in [channel.lastMessage, channel.lastPinnedMessage]) {
+        message?.applyThreadInfoUpdateEvent(event);
+      }
       for (final messageCollection
           in _collectionManager.baseMessageCollections) {
         if (messageCollection.baseChannel.channelUrl == channel.channelUrl) {

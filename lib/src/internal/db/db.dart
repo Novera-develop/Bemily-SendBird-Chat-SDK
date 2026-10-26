@@ -44,6 +44,10 @@ import 'schema/message/c_multiple_files_message.dart';
 class DB {
   final Chat _chat;
   final Isar _isar;
+  final Map<String, String> _groupChannelSignatures = {};
+  final Map<String, Future<void>> _groupChannelWrites = {};
+  Future<void> _pendingPersistence = Future<void>.value();
+  Object _groupChannelWriteGeneration = Object();
 
   DB({
     required Chat chat,
@@ -59,9 +63,27 @@ class DB {
   }
 
   Future<void> clear() async {
-    await _isar.writeTxn(() async {
-      await _isar.clear();
+    _groupChannelWriteGeneration = Object();
+    _groupChannelWrites.clear();
+    _groupChannelSignatures.clear();
+    await _enqueuePersistence(() async {
+      await _isar.writeTxn(() async {
+        await _isar.clear();
+      });
     });
+  }
+
+  Future<void> _enqueuePersistence(Future<void> Function() persist) {
+    final generation = _groupChannelWriteGeneration;
+    final previous = _pendingPersistence;
+    final pending = (() async {
+      await previous;
+      if (identical(generation, _groupChannelWriteGeneration)) {
+        await persist();
+      }
+    })();
+    _pendingPersistence = pending.catchError((Object _) {});
+    return pending;
   }
 
   // Login
@@ -237,8 +259,36 @@ class DB {
   }
 
   // GroupChannel
-  Future<void> upsertGroupChannel(GroupChannel channel) async {
-    await CGroupChannel.upsert(_chat, _isar, channel);
+  Future<void> updateGroupChannelReadStatus(GroupChannel channel,
+      {required bool Function() shouldPersist}) {
+    final persist = CGroupChannel.prepareReadStatusUpdate(
+        _isar, channel, shouldPersist);
+    return _enqueuePersistence(() async {
+      if (shouldPersist()) await _chat.dbManager.write(persist);
+    });
+  }
+
+  Future<void> upsertGroupChannel(GroupChannel channel) {
+    final snapshot = CGroupChannel.prepareUpsert(_isar, channel);
+    final channelUrl = channel.channelUrl;
+    final previous = _groupChannelWrites[channelUrl];
+    if (_groupChannelSignatures[channelUrl] == snapshot.signature) {
+      return previous ?? Future<void>.value();
+    }
+    _groupChannelSignatures[channelUrl] = snapshot.signature;
+    late final Future<void> pending;
+    pending = _enqueuePersistence(() async {
+      try {
+        await _chat.dbManager.write(snapshot.persist);
+      } finally {
+        if (identical(_groupChannelWrites[channelUrl], pending)) {
+          _groupChannelWrites.remove(channelUrl);
+          _groupChannelSignatures.remove(channelUrl);
+        }
+      }
+    });
+    _groupChannelWrites[channelUrl] = pending;
+    return pending;
   }
 
   Future<GroupChannel?> getGroupChannel(String channelUrl) async {
@@ -256,7 +306,10 @@ class DB {
   }
 
   Future<void> deleteGroupChannel(String channelUrl) async {
-    await CGroupChannel.delete(_chat, _isar, channelUrl);
+    await _enqueuePersistence(() async {
+      _groupChannelSignatures.remove(channelUrl);
+      await CGroupChannel.delete(_chat, _isar, channelUrl);
+    });
   }
 
   Future<int> getGroupChannelCount() async {
@@ -421,7 +474,9 @@ class DB {
   }
 
   Future<void> deleteChannelMessage(String rootId) async {
-    await CChannelMessage.delete(_chat, _isar, rootId);
+    await _enqueuePersistence(() async {
+      await CChannelMessage.delete(_chat, _isar, rootId);
+    });
   }
 
   // Message
@@ -474,7 +529,9 @@ class DB {
 
   // UserMessage
   Future<void> upsertUserMessage(UserMessage message) async {
-    await CUserMessage.upsert(_chat, _isar, message);
+    await _enqueuePersistence(() async {
+      await CUserMessage.upsert(_chat, _isar, message);
+    });
   }
 
   Future<UserMessage?> getUserMessage(String rootId) async {
@@ -482,7 +539,9 @@ class DB {
   }
 
   Future<void> deleteUserMessage(String rootId) async {
-    await CUserMessage.delete(_chat, _isar, rootId);
+    await _enqueuePersistence(() async {
+      await CUserMessage.delete(_chat, _isar, rootId);
+    });
   }
 
   Future<int> getUserMessageCount() async {
@@ -491,7 +550,9 @@ class DB {
 
   // FileMessage
   Future<void> upsertFileMessage(FileMessage message) async {
-    await CFileMessage.upsert(_chat, _isar, message);
+    await _enqueuePersistence(() async {
+      await CFileMessage.upsert(_chat, _isar, message);
+    });
   }
 
   Future<FileMessage?> getFileMessage(String rootId) async {
@@ -499,7 +560,9 @@ class DB {
   }
 
   Future<void> deleteFileMessage(String rootId) async {
-    await CFileMessage.delete(_chat, _isar, rootId);
+    await _enqueuePersistence(() async {
+      await CFileMessage.delete(_chat, _isar, rootId);
+    });
   }
 
   Future<int> getFileMessageCount() async {
@@ -508,7 +571,9 @@ class DB {
 
   // MultipleFilesMessage
   Future<void> upsertMultipleFilesMessage(MultipleFilesMessage message) async {
-    await CMultipleFilesMessage.upsert(_chat, _isar, message);
+    await _enqueuePersistence(() async {
+      await CMultipleFilesMessage.upsert(_chat, _isar, message);
+    });
   }
 
   Future<MultipleFilesMessage?> getMultipleFilesMessage(String rootId) async {
@@ -516,7 +581,9 @@ class DB {
   }
 
   Future<void> deleteMultipleFilesMessage(String rootId) async {
-    await CMultipleFilesMessage.delete(_chat, _isar, rootId);
+    await _enqueuePersistence(() async {
+      await CMultipleFilesMessage.delete(_chat, _isar, rootId);
+    });
   }
 
   Future<int> getMultipleFilesMessageCount() async {
@@ -525,7 +592,9 @@ class DB {
 
   // AdminMessage
   Future<void> upsertAdminMessage(AdminMessage message) async {
-    await CAdminMessage.upsert(_chat, _isar, message);
+    await _enqueuePersistence(() async {
+      await CAdminMessage.upsert(_chat, _isar, message);
+    });
   }
 
   Future<AdminMessage?> getAdminMessage(String rootId) async {
@@ -533,7 +602,9 @@ class DB {
   }
 
   Future<void> deleteAdminMessage(String rootId) async {
-    await CAdminMessage.delete(_chat, _isar, rootId);
+    await _enqueuePersistence(() async {
+      await CAdminMessage.delete(_chat, _isar, rootId);
+    });
   }
 
   Future<int> getAdminMessageCount() async {

@@ -81,7 +81,10 @@ class SendbirdChat {
     bool result = true;
 
     // Chat 객체를 appId와 함께 생성
-    if (_initialized) _chat.connectionManager.networkReconnect.cancelAll();
+    if (_initialized) {
+      _chat.connectionManager.networkReconnect.cancelAll();
+      await _chat.collectionManager.resetReadCheckpoints(dispose: true);
+    }
     _chat = Chat(appId: appId, options: options ?? SendbirdChatOptions());
     _chat.sdkInstance = this;
     _chat.networkPathHooks = _networkPathHooks;

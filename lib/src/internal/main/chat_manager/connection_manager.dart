@@ -410,6 +410,7 @@ class ConnectionManager {
     final disconnectedUserId = chat.chatContext.currentUserId ?? '';
 
     if (clear || logout) {
+      await chat.collectionManager.resetReadCheckpoints();
       chat.messageQueueMap.forEach((key, q) => q.cleanUp());
       chat.messageQueueMap.clear();
       // chat.uploads.forEach((key, value) => _api.cancelUploadingFile(key));
