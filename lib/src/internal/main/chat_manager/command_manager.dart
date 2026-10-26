@@ -169,7 +169,7 @@ class CommandManager {
     }
 
     sbLog.d(
-        StackTrace.current, '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
+        StackTrace.current, () => '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
 
     runZonedGuarded(() {
       _chat.connectionManager.webSocketClient.send(cmd.encode());
@@ -219,7 +219,7 @@ class CommandManager {
               completer.completeError(WebSocketFailedException());
             }
             sbLog.w(StackTrace.current,
-                'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
+                () => 'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
             _chat.connectionManager.webSocketClient
                 .close(reason: 'DeadWsDetection - no ACK in ${_deadWsDetectionSeconds}s');
           }
@@ -239,7 +239,7 @@ class CommandManager {
   Future<void> processCommand(Command cmd) async {
     if (cmd.payload['cmd'] == null || cmd.payload['cmd'] != 'PONG') {
       sbLog.d(StackTrace.current,
-          '\n-[cmd] ${cmd.cmd}\n-[payload] ${jsonEncoder.convert(cmd.payload)}');
+          () => '\n-[cmd] ${cmd.cmd}\n-[payload] ${jsonEncoder.convert(cmd.payload)}');
     }
 
     processUnreadMessageCountPayload(cmd.payload['unread_cnt']);
@@ -318,7 +318,7 @@ class CommandManager {
       await _processPollUpdated(cmd);
     } else {
       if (cmd.cmd != 'PONG') {
-        sbLog.i(StackTrace.current, 'Pass command: ${cmd.cmd}');
+        sbLog.i(StackTrace.current, () => 'Pass command: ${cmd.cmd}');
       }
     }
   }
@@ -365,7 +365,7 @@ class CommandManager {
   Future<void> _processLogin(Command cmd) async {
     if (_chat.connectionManager.isConnecting() &&
         _chat.chatContext.loginCompleter == null) {
-      sbLog.d(StackTrace.current, '(isConnecting() && loginCompleter == null)');
+      sbLog.d(StackTrace.current, () => '(isConnecting() && loginCompleter == null)');
       return;
     }
 
@@ -554,7 +554,7 @@ class CommandManager {
         await openChannel.enter().then((value) {
           sbLog.i(
             StackTrace.current,
-            'openChannel enter() => OK (name: ${openChannel.name})',
+            () => 'openChannel enter() => OK (name: ${openChannel.name})',
           );
         }).catchError((e) {
           sbLog.e(
@@ -566,7 +566,7 @@ class CommandManager {
           _chat.chatContext.enteredOpenChannelUrls.remove(openChannelUrl);
           sbLog.i(
             StackTrace.current,
-            '[remove()] enteredOpenChannels: ${_chat.chatContext.enteredOpenChannelUrls.length}',
+            () => '[remove()] enteredOpenChannels: ${_chat.chatContext.enteredOpenChannelUrls.length}',
           );
         });
       }
@@ -635,7 +635,7 @@ class CommandManager {
         if (messageOffsetTs != null) {
           if (message.createdAt < messageOffsetTs) {
             sbLog.d(StackTrace.current,
-                'A received message before messageOffsetTimestamp is ignored.');
+                () => 'A received message before messageOffsetTimestamp is ignored.');
             return; // Check
           }
         }
@@ -682,7 +682,8 @@ class CommandManager {
               message.channelUrl,
               messageId,
             )).catchError((e) {
-              sbLog.w(StackTrace.current, 'MACK send failed (ignored): $e');
+              sbLog.w(StackTrace.current, () => 'MACK send failed (ignored): $e');
+              return null;
             });
           }
         }
@@ -1016,7 +1017,7 @@ class CommandManager {
     final event = ChannelEvent.fromJsonWithChat(_chat, cmd.payload);
 
     sbLog.d(StackTrace.current,
-        '[SYEV] cat: ${cmd.payload['cat']}, category: ${event.category}, channelUrl: ${event.channelUrl}');
+        () => '[SYEV] cat: ${cmd.payload['cat']}, category: ${event.category}, channelUrl: ${event.channelUrl}');
 
     switch (event.category) {
       case ChannelEventCategory.typingStart:

@@ -25,24 +25,24 @@ class SendbirdLogger {
     _setLogLevel(Level.nothing);
   }
 
-  void e(StackTrace stackTrace, [String? message]) {
-    logger.e('${_getLogPrefix(stackTrace)} ${message ?? ''}');
+  void e(StackTrace stackTrace, [Object? message]) {
+    logger.e(() => _getLogMessage(stackTrace, message));
   }
 
-  void w(StackTrace stackTrace, [String? message]) {
-    logger.w('${_getLogPrefix(stackTrace)} ${message ?? ''}');
+  void w(StackTrace stackTrace, [Object? message]) {
+    logger.w(() => _getLogMessage(stackTrace, message));
   }
 
-  void i(StackTrace stackTrace, [String? message]) {
-    logger.i('${_getLogPrefix(stackTrace)} ${message ?? ''}');
+  void i(StackTrace stackTrace, [Object? message]) {
+    logger.i(() => _getLogMessage(stackTrace, message));
   }
 
-  void d(StackTrace stackTrace, [String? message]) {
-    logger.d('${_getLogPrefix(stackTrace)} ${message ?? ''}');
+  void d(StackTrace stackTrace, [Object? message]) {
+    logger.d(() => _getLogMessage(stackTrace, message));
   }
 
-  void v(StackTrace stackTrace, [String? message]) {
-    logger.v('${_getLogPrefix(stackTrace)} ${message ?? ''}');
+  void v(StackTrace stackTrace, [Object? message]) {
+    logger.v(() => _getLogMessage(stackTrace, message));
   }
 
   void _setLogLevel(Level level) {
@@ -70,6 +70,12 @@ class SendbirdLogger {
         ));
   }
 
+  String _getLogMessage(StackTrace stackTrace, Object? message) {
+    const emptyMessage = '';
+    final value = message is String Function() ? message() : message;
+    return '${_getLogPrefix(stackTrace)} ${value ?? emptyMessage}';
+  }
+
   String _getLogPrefix(StackTrace stackTrace) {
     final trace = LoggerStackTrace.from(stackTrace);
     // return '[${trace.fileName}][${trace.functionName}]';
@@ -85,9 +91,6 @@ class SendbirdLogger {
       case LogLevel.info:
         return Level.info;
       case LogLevel.none:
-        return Level.nothing;
-
-      default:
         return Level.nothing;
     }
   }

@@ -45,7 +45,7 @@ class MessageRetentionManager {
   }
 
   void checkApplicationSettings(Chat chat) async {
-    sbLog.i(StackTrace.current, 'Started');
+    sbLog.i(StackTrace.current, () => 'Started');
 
     final appId = chat.chatContext.appId;
 
@@ -59,7 +59,7 @@ class MessageRetentionManager {
       do {
         if (lastConfigTs != null && token == null) {
           sbLog.d(StackTrace.current,
-              '[lastConfigTs] ${DateTime.fromMillisecondsSinceEpoch(lastConfigTs).toString()}');
+              () => '[lastConfigTs] ${DateTime.fromMillisecondsSinceEpoch(lastConfigTs).toString()}');
         }
 
         settings = await _getApplicationSettings(
@@ -73,7 +73,7 @@ class MessageRetentionManager {
             (_latestPaginationCountMap[appId] ?? 0) + 1;
         sbLog.d(
             StackTrace.current,
-            '\n[paginationCount] ${_latestPaginationCountMap[appId]}'
+            () => '\n[paginationCount] ${_latestPaginationCountMap[appId]}'
             '\n[settings] ${jsonEncoder.convert(settings.configs)}'
             '\n[hasMore] ${settings.hasMore}'
             '\n[token]: ${settings.next}'
@@ -115,7 +115,7 @@ class MessageRetentionManager {
       sbLog.e(StackTrace.current, e.toString());
     }
 
-    sbLog.i(StackTrace.current, 'Ended');
+    sbLog.i(StackTrace.current, () => 'Ended');
   }
 
   Future<void> syncGroupChannelMessages(
@@ -170,7 +170,7 @@ class MessageRetentionManager {
     String? token,
     int? limit,
   }) async {
-    sbLog.i(StackTrace.current, 'token: $token');
+    sbLog.i(StackTrace.current, () => 'token: $token');
 
     final settings = await chat.apiClient
         .send<ApplicationSettings>(ApplicationSettingsGetRequest(

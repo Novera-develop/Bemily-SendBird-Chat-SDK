@@ -147,7 +147,7 @@ class DBManager {
       final file = File(path);
       if (await file.exists()) {
         dbFileSize = await file.length();
-        sbLog.i(StackTrace.current, '$dbFileSize');
+        sbLog.i(StackTrace.current, () => '$dbFileSize');
       }
     } catch (e) {
       sbLog.e(StackTrace.current, 'e: $e');
@@ -951,7 +951,7 @@ class DBManager {
     );
 
     sbLog.d(StackTrace.current,
-        '[${loadType.asString()}] ${isCacheHit ? '[HIT]' : '[MISS]($cause)'}');
+        () => '[${loadType.asString()}] ${isCacheHit ? '[HIT]' : '[MISS]($cause)'}');
     return isCacheHit;
   }
 

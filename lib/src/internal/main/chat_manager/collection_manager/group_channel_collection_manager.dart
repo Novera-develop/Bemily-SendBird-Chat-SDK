@@ -60,14 +60,14 @@ extension GroupChannelCollectionManager on CollectionManager {
     do {
       if (token == null) {
         sbLog.d(StackTrace.current,
-            '[request by ts] ${DateTime.fromMillisecondsSinceEpoch(lastRequestTsForGroupChannelChangeLogs).toString()}');
+            () => '[request by ts] ${DateTime.fromMillisecondsSinceEpoch(lastRequestTsForGroupChannelChangeLogs).toString()}');
 
         changeLogs = await _chat.getMyGroupChannelChangeLogs(
           params,
           timestamp: lastRequestTsForGroupChannelChangeLogs,
         );
       } else {
-        sbLog.d(StackTrace.current, '[request by token] $token');
+        sbLog.d(StackTrace.current, () => '[request by token] $token');
 
         changeLogs = await _chat.getMyGroupChannelChangeLogs(
           params,
@@ -77,7 +77,7 @@ extension GroupChannelCollectionManager on CollectionManager {
 
       sbLog.d(
           StackTrace.current,
-          '[updated] ${changeLogs.updatedChannels.length}, '
+          () => '[updated] ${changeLogs.updatedChannels.length}, '
           '[deleted] ${changeLogs.deletedChannelUrls.length}, '
           '[next token]: ${changeLogs.token}');
 
@@ -119,7 +119,7 @@ extension GroupChannelCollectionManager on CollectionManager {
     List<String>? deletedChannelUrls,
     dynamic eventDetail,
   }) async {
-    sbLog.d(StackTrace.current, eventSource.toString());
+    sbLog.d(StackTrace.current, () => eventSource.toString());
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled() &&
@@ -194,7 +194,7 @@ extension GroupChannelCollectionManager on CollectionManager {
     List<String>? deletedChannelUrls,
     dynamic eventDetail,
   }) async {
-    sbLog.d(StackTrace.current, eventSource.toString());
+    sbLog.d(StackTrace.current, () => eventSource.toString());
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {

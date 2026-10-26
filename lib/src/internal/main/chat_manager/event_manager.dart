@@ -137,7 +137,7 @@ class EventManager {
   // BaseChannelHandler
   void notifyMessageReceived(BaseChannel channel, RootMessage message) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler && message is BaseMessage) {
@@ -152,7 +152,7 @@ class EventManager {
 
   void notifyMessageUpdate(BaseChannel channel, RootMessage message) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler && message is BaseMessage) {
@@ -163,7 +163,7 @@ class EventManager {
 
   void notifyMessageDeleted(BaseChannel channel, int messageId) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[messageId] $messageId');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[messageId] $messageId');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler) {
@@ -174,7 +174,7 @@ class EventManager {
 
   void notifyMentionReceived(BaseChannel channel, RootMessage message) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[message] ${(message is BaseMessage) ? message.message : ''}');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler && message is BaseMessage) {
@@ -184,7 +184,7 @@ class EventManager {
   }
 
   void notifyChannelChanged(BaseChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler) {
@@ -197,7 +197,7 @@ class EventManager {
 
   void notifyChannelDeleted(String channelUrl, ChannelType channelType) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] $channelUrl\n-[channelType] $channelType');
+        () => '\n-[channelUrl] $channelUrl\n-[channelType] $channelType');
 
     for (final e in _channelHandlers.values) {
       if (e is BaseChannelHandler) {
@@ -207,7 +207,7 @@ class EventManager {
   }
 
   void notifyReactionUpdated(BaseChannel channel, ReactionEvent event) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     if (channel is FeedChannel) return;
 
@@ -220,7 +220,7 @@ class EventManager {
 
   void notifyUserMuted(BaseChannel channel, RestrictedUser restrictedUser) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${restrictedUser.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${restrictedUser.userId}');
 
     if (channel is FeedChannel) return;
 
@@ -233,7 +233,7 @@ class EventManager {
 
   void notifyUserUnmuted(BaseChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     if (channel is FeedChannel) return;
 
@@ -246,7 +246,7 @@ class EventManager {
 
   void notifyUserBanned(BaseChannel channel, RestrictedUser restrictedUser) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${restrictedUser.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${restrictedUser.userId}');
 
     if (channel is FeedChannel) return;
 
@@ -259,7 +259,7 @@ class EventManager {
 
   void notifyUserUnbanned(BaseChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     if (channel is FeedChannel) return;
 
@@ -271,7 +271,7 @@ class EventManager {
   }
 
   void notifyChannelFrozen(BaseChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     if (channel is FeedChannel) return;
 
@@ -283,7 +283,7 @@ class EventManager {
   }
 
   void notifyChannelUnfrozen(BaseChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     if (channel is FeedChannel) return;
 
@@ -296,7 +296,7 @@ class EventManager {
 
   void notifyMetaDataChanged(BaseChannel channel, Map<String, dynamic> data) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[metaData] $data');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[metaData] $data');
 
     if (channel is FeedChannel) return;
 
@@ -316,7 +316,7 @@ class EventManager {
   void notifyMetaCountersChanged(
       BaseChannel channel, Map<String, dynamic> data) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[metaData] $data');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[metaData] $data');
 
     if (channel is FeedChannel) return;
 
@@ -334,7 +334,7 @@ class EventManager {
   }
 
   void notifyOperatorUpdated(BaseChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     if (channel is FeedChannel) return;
 
@@ -347,7 +347,7 @@ class EventManager {
 
   void notifyThreadInfoUpdated(
       GroupChannel channel, ThreadInfoUpdateEvent event) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     if (channel is FeedChannel) return;
 
@@ -364,7 +364,7 @@ class EventManager {
     required ReadType readType,
     required List<String> userIds,
   }) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler && channel is GroupChannel) {
@@ -383,7 +383,7 @@ class EventManager {
   }
 
   void notifyDeliveryStatusUpdated(GroupChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -393,7 +393,7 @@ class EventManager {
   }
 
   void notifyChannelTypingStatusUpdated(GroupChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -405,7 +405,7 @@ class EventManager {
   void notifyUserReceivedInvitation(
       GroupChannel channel, List<User> invitees, User? inviter) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[invitees] ${invitees.map((e) => e.userId)}, \n-[inviter] ${inviter?.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[invitees] ${invitees.map((e) => e.userId)}, \n-[inviter] ${inviter?.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -420,7 +420,7 @@ class EventManager {
     User? inviter,
   ) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[invitee] ${invitee.userId}, \n-[inviter] ${inviter?.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[invitee] ${invitee.userId}, \n-[inviter] ${inviter?.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -431,7 +431,7 @@ class EventManager {
 
   void notifyUserJoined(GroupChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -442,7 +442,7 @@ class EventManager {
 
   void notifyUserLeft(GroupChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -452,7 +452,7 @@ class EventManager {
   }
 
   void notifyChannelHidden(GroupChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -463,7 +463,7 @@ class EventManager {
 
   void notifyChannelMemberCountChanged(List<GroupChannel> channels) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrls] ${channels.map((e) => e.channelUrl)}');
+        () => '\n-[channelUrls] ${channels.map((e) => e.channelUrl)}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -473,7 +473,7 @@ class EventManager {
   }
 
   void notifyPollVoted(GroupChannel channel, PollVoteEvent event) {
-    sbLog.i(StackTrace.current, '\n-[pollId] ${event.pollId}');
+    sbLog.i(StackTrace.current, () => '\n-[pollId] ${event.pollId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -483,7 +483,7 @@ class EventManager {
   }
 
   void notifyPollUpdated(GroupChannel channel, PollUpdateEvent event) {
-    sbLog.i(StackTrace.current, '\n-[pollId] ${event.pollId}');
+    sbLog.i(StackTrace.current, () => '\n-[pollId] ${event.pollId}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -493,7 +493,7 @@ class EventManager {
   }
 
   void notifyPollDeleted(GroupChannel channel, int pollId) {
-    sbLog.i(StackTrace.current, '\n-[pollId] $pollId');
+    sbLog.i(StackTrace.current, () => '\n-[pollId] $pollId');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -503,7 +503,7 @@ class EventManager {
   }
 
   void notifyPinnedMessageUpdated(GroupChannel channel) {
-    sbLog.i(StackTrace.current, '\n-[channelUrl] ${channel.channelUrl}');
+    sbLog.i(StackTrace.current, () => '\n-[channelUrl] ${channel.channelUrl}');
 
     for (final e in _channelHandlers.values) {
       if (e is GroupChannelHandler) {
@@ -515,7 +515,7 @@ class EventManager {
   // OpenChannelHandler
   void notifyUserEntered(OpenChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is OpenChannelHandler) {
@@ -526,7 +526,7 @@ class EventManager {
 
   void notifyUserExited(OpenChannel channel, User user) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
+        () => '\n-[channelUrl] ${channel.channelUrl}\n-[userId] ${user.userId}');
 
     for (final e in _channelHandlers.values) {
       if (e is OpenChannelHandler) {
@@ -537,7 +537,7 @@ class EventManager {
 
   void notifyChannelParticipantCountChanged(List<OpenChannel> channels) {
     sbLog.i(StackTrace.current,
-        '\n-[channelUrls] ${channels.map((e) => e.channelUrl)}');
+        () => '\n-[channelUrls] ${channels.map((e) => e.channelUrl)}');
 
     for (final e in _channelHandlers.values) {
       if (e is OpenChannelHandler) {
@@ -548,7 +548,7 @@ class EventManager {
 
   // ConnectionHandler
   void notifyConnected(String userId) {
-    sbLog.i(StackTrace.current, 'userId: $userId');
+    sbLog.i(StackTrace.current, () => 'userId: $userId');
 
     for (final e in _connectionHandlers.values) {
       e.onConnected(userId);
@@ -556,7 +556,7 @@ class EventManager {
   }
 
   void notifyDisconnected(String userId) {
-    sbLog.i(StackTrace.current, 'userId: $userId');
+    sbLog.i(StackTrace.current, () => 'userId: $userId');
 
     for (final e in _connectionHandlers.values) {
       e.onDisconnected(userId);
@@ -599,7 +599,7 @@ class EventManager {
   void notifyTotalUnreadMessageCountChanged(
       UnreadMessageCount unreadMessageCount) {
     sbLog.i(StackTrace.current,
-        '\n-[groupChannelUnreadMessageCount] ${unreadMessageCount.totalCountForGroupChannels}\n-[feedChannelUnreadMessageCount] ${unreadMessageCount.totalCountForFeedChannels}\n-[totalCountByCustomType] ${unreadMessageCount.totalCountByCustomType}');
+        () => '\n-[groupChannelUnreadMessageCount] ${unreadMessageCount.totalCountForGroupChannels}\n-[feedChannelUnreadMessageCount] ${unreadMessageCount.totalCountForFeedChannels}\n-[totalCountByCustomType] ${unreadMessageCount.totalCountByCustomType}');
 
     for (final e in _userHandlers.values) {
       e.onTotalUnreadMessageCountChanged(unreadMessageCount);
@@ -607,7 +607,7 @@ class EventManager {
   }
 
   void notifyFriendsDiscovered(List<User> friends) {
-    sbLog.i(StackTrace.current, '\n-[friends] ${friends.map((e) => e.userId)}');
+    sbLog.i(StackTrace.current, () => '\n-[friends] ${friends.map((e) => e.userId)}');
 
     for (final e in _userHandlers.values) {
       e.onFriendsDiscovered(friends);
@@ -631,7 +631,7 @@ class EventManager {
   }
 
   void notifySessionError(SendbirdException error) {
-    sbLog.i(StackTrace.current, '\n-[error] $error');
+    sbLog.i(StackTrace.current, () => '\n-[error] $error');
     _sessionHandler?.onSessionError(error);
   }
 }

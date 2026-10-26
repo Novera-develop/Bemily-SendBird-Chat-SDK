@@ -285,7 +285,7 @@ class GroupChannel extends BaseChannel {
     String channelUrl, {
     Chat? chat,
   }) async {
-    sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
+    sbLog.i(StackTrace.current, () => 'channelUrl: $channelUrl');
     chat ??= SendbirdChat.instance.chat;
 
     GroupChannel? channel =
@@ -361,7 +361,7 @@ class GroupChannel extends BaseChannel {
     String channelUrl, {
     Chat? chat,
   }) async {
-    sbLog.i(StackTrace.current, 'channelUrl: $channelUrl');
+    sbLog.i(StackTrace.current, () => 'channelUrl: $channelUrl');
     chat ??= SendbirdChat.instance.chat;
 
     final channel = await chat.apiClient.send<GroupChannel>(
@@ -393,7 +393,7 @@ class GroupChannel extends BaseChannel {
     ProgressHandler? progressHandler,
     Chat? chat,
   }) async {
-    sbLog.i(StackTrace.current, 'params.userIds: ${params.userIds}');
+    sbLog.i(StackTrace.current, () => 'params.userIds: ${params.userIds}');
     chat ??= SendbirdChat.instance.chat;
 
     final currentUserId = chat.chatContext.currentUserId ?? '';
@@ -415,7 +415,7 @@ class GroupChannel extends BaseChannel {
     GroupChannelUpdateParams params, {
     ProgressHandler? progressHandler,
   }) async {
-    sbLog.i(StackTrace.current, 'params.name: ${params.name}');
+    sbLog.i(StackTrace.current, () => 'params.name: ${params.name}');
 
     return await chat.apiClient.send<GroupChannel>(GroupChannelUpdateRequest(
       chat,
@@ -487,7 +487,7 @@ class GroupChannel extends BaseChannel {
       if (channel.messageOffsetTimestamp == null ||
           channel.messageOffsetTimestamp! < messageOffsetTimestamp!) {
         sbLog.d(StackTrace.current,
-            'Can not update regarding messageOffsetTimestamp in channel.');
+            () => 'Can not update regarding messageOffsetTimestamp in channel.');
         return false;
       }
     }
