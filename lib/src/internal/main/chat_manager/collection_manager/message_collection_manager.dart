@@ -8,7 +8,7 @@ extension MessageCollectionManager on CollectionManager {
 //------------------------------//
   void addMessageCollection(BaseMessageCollection collection) {
     sbLog.d(
-        StackTrace.current, 'channelUrl: ${collection.baseChannel.channelUrl}');
+        StackTrace.current, () => 'channelUrl: ${collection.baseChannel.channelUrl}');
 
     baseMessageCollections.add(collection);
     _setInitialMessageChangeLogsAndMessagesGapTs();
@@ -16,7 +16,7 @@ extension MessageCollectionManager on CollectionManager {
 
   void removeMessageCollection(BaseMessageCollection collection) {
     sbLog.d(
-        StackTrace.current, 'channelUrl: ${collection.baseChannel.channelUrl}');
+        StackTrace.current, () => 'channelUrl: ${collection.baseChannel.channelUrl}');
 
     baseMessageCollections.remove(collection);
   }
@@ -121,7 +121,7 @@ extension MessageCollectionManager on CollectionManager {
   Future<void> _requestMessageChangeLogs(
       BaseMessageCollection messageCollection) async {
     sbLog.d(StackTrace.current,
-        'channelUrl: ${messageCollection.baseChannel.channelUrl}');
+        () => 'channelUrl: ${messageCollection.baseChannel.channelUrl}');
 
     final channel = messageCollection.baseChannel;
     final params = MessageChangeLogParams();
@@ -202,7 +202,7 @@ extension MessageCollectionManager on CollectionManager {
   Future<void> _requestPollChangeLogs(
       BaseMessageCollection messageCollection) async {
     sbLog.d(StackTrace.current,
-        'channelUrl: ${messageCollection.baseChannel.channelUrl}');
+        () => 'channelUrl: ${messageCollection.baseChannel.channelUrl}');
 
     if (_chat.chatContext.appInfo == null ||
         _chat.chatContext.appInfo!.premiumFeatureList.contains('poll') ==
@@ -302,7 +302,7 @@ extension MessageCollectionManager on CollectionManager {
     BaseMessageCollection messageCollection,
   ) async {
     sbLog.d(StackTrace.current,
-        'channelUrl: ${messageCollection.baseChannel.channelUrl}');
+        () => 'channelUrl: ${messageCollection.baseChannel.channelUrl}');
 
     final List<String> deletedPrevMessageIds = [];
     final List<String> deletedNextMessageIds = [];
@@ -540,7 +540,7 @@ extension MessageCollectionManager on CollectionManager {
     List<String>? deletedChannelUrls,
     dynamic eventDetail,
   }) async {
-    sbLog.d(StackTrace.current, eventSource.toString());
+    sbLog.d(StackTrace.current, () => eventSource.toString());
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {
@@ -653,7 +653,7 @@ extension MessageCollectionManager on CollectionManager {
     bool isMessageOffsetUpdated = false,
   }) async {
     sbLog.d(StackTrace.current,
-        'channelUrl: ${messageCollection.baseChannel.channelUrl}, ${eventSource.toString()}');
+        () => 'channelUrl: ${messageCollection.baseChannel.channelUrl}, ${eventSource.toString()}');
 
     List<RootMessage> addedMessagesForEvent = [];
     final List<RootMessage> updatedMessagesForEvent = [];

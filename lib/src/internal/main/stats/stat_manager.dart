@@ -204,12 +204,14 @@ class StatManager {
           pendingDefaultStats.add(stat);
           await defaultStatPrefs.appendStat(stat);
 
+          final logPrefix = '[StatTest][Append] state: $state'
+              ' pendingDefaultStats: ${pendingDefaultStats.length},'
+              ' cachedDefaultStats: ${cachedDefaultStats.length},';
+          final statCount = await defaultStatPrefs.statCount;
           sbLog.d(
               StackTrace.current,
-              '[StatTest][Append] state: $state'
-              ' pendingDefaultStats: ${pendingDefaultStats.length},'
-              ' cachedDefaultStats: ${cachedDefaultStats.length},'
-              ' defaultStatPrefs: ${await defaultStatPrefs.statCount},'
+              () => '$logPrefix'
+              ' defaultStatPrefs: $statCount,'
               ' stat: \n${jsonEncoder.convert(stat.toJson())}');
 
           result = true;
@@ -224,12 +226,14 @@ class StatManager {
           cachedDefaultStats.add(stat);
           await defaultStatPrefs.appendStat(stat);
 
+          final logPrefix = '[StatTest][Append] state: $state'
+              ' pendingDefaultStats: ${pendingDefaultStats.length},'
+              ' cachedDefaultStats: ${cachedDefaultStats.length},';
+          final statCount = await defaultStatPrefs.statCount;
           sbLog.d(
               StackTrace.current,
-              '[StatTest][Append] state: $state'
-              ' pendingDefaultStats: ${pendingDefaultStats.length},'
-              ' cachedDefaultStats: ${cachedDefaultStats.length},'
-              ' defaultStatPrefs: ${await defaultStatPrefs.statCount},'
+              () => '$logPrefix'
+              ' defaultStatPrefs: $statCount,'
               ' stat: \n${jsonEncoder.convert(stat.toJson())}');
 
           await _checkToSendStats(stat);

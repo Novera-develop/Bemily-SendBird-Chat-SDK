@@ -141,7 +141,7 @@ class HttpClient {
     );
 
     sbLog.d(StackTrace.current,
-        '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}');
+        () => '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}');
 
     http.Response res = await _send(HttpMethod.get, uri, headers: allHeaders);
     if (await _checkSessionKeyExpired(res)) {
@@ -166,7 +166,7 @@ class HttpClient {
     );
 
     sbLog.d(StackTrace.current,
-        '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
+        () => '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
 
     http.Response res =
         await _send(HttpMethod.post, uri, headers: allHeaders, body: body);
@@ -191,7 +191,7 @@ class HttpClient {
     );
 
     sbLog.d(StackTrace.current,
-        '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
+        () => '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
 
     http.Response res =
         await _send(HttpMethod.put, uri, headers: allHeaders, body: body);
@@ -216,7 +216,7 @@ class HttpClient {
     );
 
     sbLog.d(StackTrace.current,
-        '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
+        () => '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
 
     http.Response res =
         await _send(HttpMethod.delete, uri, headers: allHeaders, body: body);
@@ -304,7 +304,7 @@ class HttpClient {
     );
 
     sbLog.d(StackTrace.current,
-        '\n-[url] $uri\n-[method] $method\n-[headers] ${jsonEncoder.convert(request.headers)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
+        () => '\n-[url] $uri\n-[method] $method\n-[headers] ${jsonEncoder.convert(request.headers)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}\n-[body] ${jsonEncoder.convert(body)}');
 
     String? reqId = body?['request_id'];
     http.Response res;
@@ -325,7 +325,7 @@ class HttpClient {
           progressHandler: progressHandler,
         );
 
-        sbLog.d(StackTrace.current, 'Retry');
+        sbLog.d(StackTrace.current, () => 'Retry');
         if (reqId != null) {
           uploadingMultipartRequests[reqId] = retryRequest;
         }
@@ -435,13 +435,14 @@ class HttpClient {
       throw MalformedDataException();
     }
 
-    final headersString = jsonEncoder.convert(response.headers);
-    final bodyString = '${response.statusCode} ${jsonEncoder.convert(body)}';
     final hasErrorCode =
         response.statusCode >= 400 && response.statusCode < 500;
     final logFunc = hasErrorCode ? sbLog.e : sbLog.d;
-    logFunc(StackTrace.current,
-        '\n-[url] ${response.request!.url}\n-[response_headers] $headersString\n-[response] $bodyString');
+    logFunc(StackTrace.current, () {
+      final headersString = jsonEncoder.convert(response.headers);
+      final bodyString = '${response.statusCode} ${jsonEncoder.convert(body)}';
+      return '\n-[url] ${response.request!.url}\n-[response_headers] $headersString\n-[response] $bodyString';
+    });
 
     if (response.statusCode >= 400 && response.statusCode < 500) {
       final err =

@@ -207,7 +207,7 @@ class CollectionManager {
     BaseMessageCollection collection,
   ) async {
     sbLog.d(
-        StackTrace.current, 'channelUrl: ${collection.baseChannel.channelUrl}');
+        StackTrace.current, () => 'channelUrl: ${collection.baseChannel.channelUrl}');
 
     if (collection.isInitialized) {
       await _requestMessageChangeLogs(collection);
@@ -243,7 +243,7 @@ class CollectionManager {
   Future<void> refreshNotificationCollection({
     required String channelUrl,
   }) async {
-    sbLog.d(StackTrace.current, 'channelUrl: $channelUrl');
+    sbLog.d(StackTrace.current, () => 'channelUrl: $channelUrl');
 
     for (final collection in baseMessageCollections) {
       if (collection is NotificationCollection) {
@@ -259,7 +259,7 @@ class CollectionManager {
   }
 
   void markAsReadForFeedChannel(String channelUrl, List<String>? messageIds) {
-    sbLog.d(StackTrace.current, 'channelUrl: $channelUrl');
+    sbLog.d(StackTrace.current, () => 'channelUrl: $channelUrl');
 
     for (final collection in baseMessageCollections) {
       if (collection is NotificationCollection) {
@@ -298,7 +298,7 @@ class CollectionManager {
   }
 
   void onMessagesUpdated(String channelUrl, List<RootMessage>? messages) async {
-    sbLog.d(StackTrace.current, 'channelUrl: $channelUrl');
+    sbLog.d(StackTrace.current, () => 'channelUrl: $channelUrl');
 
     for (final collection in baseMessageCollections) {
       if (collection is NotificationCollection) {
