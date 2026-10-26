@@ -21,161 +21,143 @@ const _loginTimeout = Duration(seconds: SendbirdChatOptions.defaultConnectionTim
 
 void registerNetworkCredentialsTests() {
   _registerCredentialRaceTests();
-  for (final hooks in _hookModes) {
-    for (final phase in _connectionPhases) {
-      for (final nickname in <String?>[null, _nextNickname]) {
-        testWidgets('same credentials preserve $phase nickname=$nickname hooks=$hooks',
-            (tester) async {
-          final fixture = _Fixture();
-          if (hooks) fixture.chat.networkPathHooks = _Hooks();
-          fixture.chat.chatContext.accessToken = _firstAccessToken;
-          final pending = _setCredentialPhase(fixture, phase);
-          final current = fixture.chat.chatContext.currentUser!;
-          var completed = false;
-          final joined = fixture.chat.connect(_userId,
-              accessToken: _firstAccessToken, nickname: nickname).then((user) {
-            completed = true;
-            return user;
-          });
-          await _flush(tester);
-          expect(completed, phase == _connectedPhase);
-          expect(fixture.starts, _none);
-          expect(fixture.sockets.single.closes, _none);
-          expect(fixture.chat.chatContext.accessToken, _firstAccessToken);
-          pending?.complete(current);
-          await _flush(tester);
-          expect(await joined, same(current));
-          fixture.dispose();
-          await _flush(tester);
+  for (final phase in _connectionPhases) {
+    for (final nickname in <String?>[null, _nextNickname]) {
+      testWidgets('same credentials preserve $phase nickname=$nickname',
+          (tester) async {
+        final fixture = _Fixture();
+        fixture.chat.chatContext.accessToken = _firstAccessToken;
+        final pending = _setCredentialPhase(fixture, phase);
+        final current = fixture.chat.chatContext.currentUser!;
+        var completed = false;
+        final joined = fixture.chat.connect(_userId,
+            accessToken: _firstAccessToken, nickname: nickname).then((user) {
+          completed = true;
+          return user;
         });
-      }
-
-      for (final field in _transportCredentialFields) {
-        testWidgets('changed $field replaces $phase credentials hooks=$hooks',
-            (tester) async {
-          final fixture = _Fixture();
-          if (hooks) fixture.chat.networkPathHooks = _Hooks();
-          fixture.chat.chatContext.accessToken = _firstAccessToken;
-          final pending = _setCredentialPhase(fixture, phase);
-          final cancelled = pending == null ? null : expectLater(pending.future,
-              throwsA(isA<ConnectionCanceledException>()));
-          final previous = fixture.sockets.single;
-          final closeBarrier = Completer<bool>();
-          previous.closeBarrier = closeBarrier;
-          final replacement = fixture.chat.connect(_userId,
-              accessToken: field == _accessTokenField
-                  ? _thirdAccessToken : _firstAccessToken,
-              apiHost: field == _apiHostField ? _nextApiHost : null,
-              wsHost: field == _wsHostField ? _nextWsHost : null);
-          await _flush(tester);
-          expect(previous.closes, _one);
-          expect(fixture.starts, _none);
-          closeBarrier.complete(true);
-          await _flush(tester);
-          if (cancelled != null) await cancelled;
-          expect(fixture.starts, _one);
-          expect(fixture.sockets.last.loginAccessToken,
-              field == _accessTokenField ? _thirdAccessToken : _firstAccessToken);
-          expect(fixture.sockets.last.loginSessionKey, isNull);
-          if (field == _apiHostField) {
-            expect(fixture.chat.chatContext.apiHost, _nextApiHost);
-          }
-          if (field == _wsHostField) {
-            expect(Uri.parse(fixture.sockets.last._url!).host,
-                Uri.parse(_nextWsHost).host);
-          }
-          await fixture.sockets.last.login();
-          await _flush(tester);
-          expect((await replacement).userId, _userId);
-          expect(fixture.connection.isConnected(), isTrue);
-          fixture.dispose();
-          await _flush(tester);
-        });
-      }
+        await _flush(tester);
+        expect(completed, phase == _connectedPhase);
+        expect(fixture.starts, _none);
+        expect(fixture.sockets.single.closes, _none);
+        expect(fixture.chat.chatContext.accessToken, _firstAccessToken);
+        pending?.complete(current);
+        await _flush(tester);
+        expect(await joined, same(current));
+        fixture.dispose();
+        await _flush(tester);
+      });
     }
 
-    for (final managed in _recoveryStartedModes) {
-      test('successive token changes reach loopback managed=$managed hooks=$hooks',
-          () async {
-        await HttpOverrides.runWithHttpOverrides(() async {
-          final server = await HttpServer.bind(
-              InternetAddress.loopbackIPv4, _ephemeralPort);
-          final tokens = <String?>[];
-          final sessionKeys = <String?>[];
-          final peers = <WebSocket>[];
-          final peerClosures = <Future<void>>[];
-          final subscription = server.listen((request) async {
-            tokens.add(request.headers.value(_tokenHeader));
-            sessionKeys.add(request.headers.value(_authHeader));
-            final peer = await WebSocketTransformer.upgrade(request);
-            peers.add(peer);
-            final closed = Completer<void>();
-            peerClosures.add(closed.future);
-            peer.listen((_) {}, onDone: closed.complete);
-            peer.add('$_loginCommand${jsonEncode(_loginPayload)}');
-          });
-          final sdk = SendbirdChat.create();
-          await sdk.init(appId: _appId,
-              options: SendbirdChatOptions(useCollectionCaching: false));
-          final fixture = _Fixture(chat: sdk.chat, useLocalServer: true);
-          if (hooks) fixture.chat.networkPathHooks = _Hooks();
-          final wsHost = Uri(scheme: _localSocketScheme,
-              host: server.address.address, port: server.port).toString();
-          try {
-            if (managed) {
-              fixture.chat.chatContext
-                ..accessToken = _firstAccessToken
-                ..wsHost = wsHost;
-              await fixture.adapter.beginOrJoinReconnect(
-                  fixture.key(), fixture.deadline);
-            } else {
-              await sdk.connect(_userId,
-                  accessToken: _firstAccessToken, wsHost: wsHost);
-            }
-            final first = fixture.chat.chatContext.currentUser;
-            expect(await sdk.connect(_userId,
-                accessToken: _firstAccessToken, wsHost: wsHost), same(first));
-            expect(tokens.length, _one);
-            expect(tokens.single, managed ? null : _firstAccessToken);
-            expect(sessionKeys.single, managed ? _userId : null);
-
-            await sdk.connect(_userId,
-                accessToken: _nextAccessToken, wsHost: wsHost);
-            await peerClosures.first.timeout(_budget);
-            expect(fixture.connection.networkReconnect.ownsReconnect, isFalse);
-            expect(tokens.length, _two);
-            expect(tokens.last, _nextAccessToken);
-            expect(sessionKeys.last, isNull);
-            final second = fixture.chat.chatContext.currentUser;
-            expect(await sdk.connect(_userId,
-                accessToken: _nextAccessToken, wsHost: wsHost), same(second));
-            expect(tokens.length, _two);
-
-            await sdk.connect(_userId,
-                accessToken: _thirdAccessToken, wsHost: wsHost);
-            await peerClosures[_one].timeout(_budget);
-            expect(tokens.length, _three);
-            expect(tokens.last, _thirdAccessToken);
-            expect(sessionKeys.last, isNull);
-            expect(fixture.chat.chatContext.accessToken, _thirdAccessToken);
-            expect(fixture.connection.networkReconnect.ownsReconnect, isFalse);
-            final third = fixture.chat.chatContext.currentUser;
-            expect(await sdk.connect(_userId,
-                accessToken: _thirdAccessToken, wsHost: wsHost), same(third));
-            expect(tokens.length, _three);
-          } finally {
-            await fixture.connection.disconnect(logout: false);
-            fixture.dispose();
-            for (final peer in peers) {
-              await peer.close();
-            }
-            await subscription.cancel();
-            await server.close(force: true);
-          }
-        }, _LocalHttpOverrides());
+    for (final field in _transportCredentialFields) {
+      testWidgets('changed $field replaces $phase credentials',
+          (tester) async {
+        final fixture = _Fixture();
+        fixture.chat.chatContext.accessToken = _firstAccessToken;
+        final pending = _setCredentialPhase(fixture, phase);
+        final cancelled = pending == null ? null : expectLater(pending.future,
+            throwsA(isA<ConnectionCanceledException>()));
+        final previous = fixture.sockets.single;
+        final closeBarrier = Completer<bool>();
+        previous.closeBarrier = closeBarrier;
+        final replacement = fixture.chat.connect(_userId,
+            accessToken: field == _accessTokenField
+                ? _thirdAccessToken : _firstAccessToken,
+            apiHost: field == _apiHostField ? _nextApiHost : null,
+            wsHost: field == _wsHostField ? _nextWsHost : null);
+        await _flush(tester);
+        expect(previous.closes, _one);
+        expect(fixture.starts, _none);
+        closeBarrier.complete(true);
+        await _flush(tester);
+        if (cancelled != null) await cancelled;
+        expect(fixture.starts, _one);
+        expect(fixture.sockets.last.loginAccessToken,
+            field == _accessTokenField ? _thirdAccessToken : _firstAccessToken);
+        expect(fixture.sockets.last.loginSessionKey, isNull);
+        if (field == _apiHostField) {
+          expect(fixture.chat.chatContext.apiHost, _nextApiHost);
+        }
+        if (field == _wsHostField) {
+          expect(Uri.parse(fixture.sockets.last._url!).host,
+              Uri.parse(_nextWsHost).host);
+        }
+        await fixture.sockets.last.login();
+        await _flush(tester);
+        expect((await replacement).userId, _userId);
+        expect(fixture.connection.isConnected(), isTrue);
+        fixture.dispose();
+        await _flush(tester);
       });
     }
   }
+
+  test('successive token changes reach loopback',
+      () async {
+    await HttpOverrides.runWithHttpOverrides(() async {
+      final server = await HttpServer.bind(
+          InternetAddress.loopbackIPv4, _ephemeralPort);
+      final tokens = <String?>[];
+      final sessionKeys = <String?>[];
+      final peers = <WebSocket>[];
+      final peerClosures = <Future<void>>[];
+      final subscription = server.listen((request) async {
+        tokens.add(request.headers.value(_tokenHeader));
+        sessionKeys.add(request.headers.value(_authHeader));
+        final peer = await WebSocketTransformer.upgrade(request);
+        peers.add(peer);
+        final closed = Completer<void>();
+        peerClosures.add(closed.future);
+        peer.listen((_) {}, onDone: closed.complete);
+        peer.add('$_loginCommand${jsonEncode(_loginPayload)}');
+      });
+      final sdk = SendbirdChat.create();
+      await sdk.init(appId: _appId,
+          options: SendbirdChatOptions(useCollectionCaching: false));
+      final fixture = _Fixture(chat: sdk.chat, useLocalServer: true);
+      final wsHost = Uri(scheme: _localSocketScheme,
+          host: server.address.address, port: server.port).toString();
+      try {
+        await sdk.connect(_userId, accessToken: _firstAccessToken, wsHost: wsHost);
+        final first = fixture.chat.chatContext.currentUser;
+        expect(await sdk.connect(_userId,
+            accessToken: _firstAccessToken, wsHost: wsHost), same(first));
+        expect(tokens.length, _one);
+        expect(tokens.single, _firstAccessToken);
+        expect(sessionKeys.single, null);
+
+        await sdk.connect(_userId,
+            accessToken: _nextAccessToken, wsHost: wsHost);
+        await peerClosures.first.timeout(_budget);
+        expect(tokens.length, _two);
+        expect(tokens.last, _nextAccessToken);
+        expect(sessionKeys.last, isNull);
+        final second = fixture.chat.chatContext.currentUser;
+        expect(await sdk.connect(_userId,
+            accessToken: _nextAccessToken, wsHost: wsHost), same(second));
+        expect(tokens.length, _two);
+
+        await sdk.connect(_userId,
+            accessToken: _thirdAccessToken, wsHost: wsHost);
+        await peerClosures[_one].timeout(_budget);
+        expect(tokens.length, _three);
+        expect(tokens.last, _thirdAccessToken);
+        expect(sessionKeys.last, isNull);
+        expect(fixture.chat.chatContext.accessToken, _thirdAccessToken);
+        final third = fixture.chat.chatContext.currentUser;
+        expect(await sdk.connect(_userId,
+            accessToken: _thirdAccessToken, wsHost: wsHost), same(third));
+        expect(tokens.length, _three);
+      } finally {
+        await fixture.connection.disconnect(logout: false);
+        fixture.dispose();
+        for (final peer in peers) {
+          await peer.close();
+        }
+        await subscription.cancel();
+        await server.close(force: true);
+      }
+    }, _LocalHttpOverrides());
+  });
 }
 
 Completer<User>? _setCredentialPhase(_Fixture fixture, String phase) {
@@ -189,222 +171,150 @@ Completer<User>? _setCredentialPhase(_Fixture fixture, String phase) {
 }
 
 void _registerCredentialRaceTests() {
-  for (final hooks in _hookModes) {
-    for (final cache in _cacheModes) {
-      testWidgets('replacement cancels old login timeout cache=$cache hooks=$hooks',
+  for (final cache in _cacheModes) {
+    testWidgets('replacement cancels old login timeout cache=$cache',
+        (tester) async {
+      final fixture = _Fixture(useCache: cache);
+      fixture.connection.changeState(DisconnectedState(chat: fixture.chat));
+      final timers = <Timer>[];
+      Object? firstError;
+      final first = runZoned(() => fixture.chat.connect(_userId,
+          accessToken: _firstAccessToken), zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          final timer = parent.createTimer(zone, duration, callback);
+          if (duration == _loginTimeout) timers.add(timer);
+          return timer;
+        },
+      )).then<void>((_) {}, onError: (Object error) { firstError = error; });
+      await _flush(tester);
+      expect(fixture.chat.dbManager.isEnabled(), cache);
+      expect(timers, hasLength(_one));
+      expect(timers.single.isActive, isTrue);
+      final previous = fixture.sockets.last;
+      final replacement = fixture.chat.connect(_userId,
+          accessToken: _nextAccessToken);
+      await _flush(tester);
+      expect(firstError, isA<ConnectionCanceledException>());
+      expect(timers.single.isActive, isFalse);
+      expect(previous.closes, _one);
+      final closes = previous.closes;
+      await fixture.sockets.last.login();
+      await _flush(tester);
+      expect((await replacement).userId, _userId);
+      await tester.pump(_loginTimeout);
+      await first;
+      expect(fixture.connection.isConnected(), isTrue);
+      expect(fixture.sockets.last.connected, isTrue);
+      expect(fixture.sockets.last.closes, closes);
+      fixture.dispose();
+      await _flush(tester);
+    });
+
+    for (final barrierStage in _loginBarriers) {
+      testWidgets('replacement rejects paused LOGI $barrierStage cache=$cache',
           (tester) async {
-        final fixture = _Fixture(useCache: cache);
-        fixture.connection.changeState(DisconnectedState(chat: fixture.chat));
-        if (hooks) fixture.chat.networkPathHooks = _Hooks();
-        final timers = <Timer>[];
-        Object? firstError;
-        final first = runZoned(() => fixture.chat.connect(_userId,
-            accessToken: _firstAccessToken), zoneSpecification: ZoneSpecification(
-          createTimer: (self, parent, zone, duration, callback) {
-            final timer = parent.createTimer(zone, duration, callback);
-            if (duration == _loginTimeout) timers.add(timer);
-            return timer;
-          },
-        )).then<void>((_) {}, onError: (Object error) { firstError = error; });
+        final barrier = Completer<void>();
+        var loginInfos = _none;
+        Completer<User>? newLogin;
+        late _Fixture fixture;
+        fixture = _Fixture(useCache: cache, onLoginInfo: () {
+          loginInfos++;
+          if (loginInfos == _two) {
+            newLogin = fixture.chat.chatContext.loginCompleter;
+            barrier.complete();
+          }
+        });
+        final first = expectLater(fixture.chat.connect(_userId,
+            accessToken: _firstAccessToken),
+            throwsA(isA<ConnectionCanceledException>()));
         await _flush(tester);
-        expect(fixture.chat.dbManager.isEnabled(), cache);
-        expect(timers, hasLength(_one));
-        expect(timers.single.isActive, isTrue);
+        if (barrierStage == _beforeSessionWrite) {
+          fixture.deviceTokens.barrier = barrier;
+        } else {
+          fixture.dispatcher.barrier = barrier;
+        }
+        var resumed = false;
         final previous = fixture.sockets.last;
+        void onResumed() {
+          resumed = true;
+          expectSync(newLogin, isNotNull);
+          expectSync(newLogin!.isCompleted, isFalse);
+          expectSync(fixture.starts, _one);
+        }
+        if (barrierStage == _beforeSessionWrite) {
+          fixture.deviceTokens.onResumed = onResumed;
+        } else {
+          fixture.dispatcher.onResumed = onResumed;
+        }
+        final oldLogin = previous.data('$_loginCommand${jsonEncode({
+          ..._loginPayload, _sessionKeyField: _nextSessionKey,
+        })}');
+        await _flush(tester);
+        expect(resumed, isFalse);
+        final writesBefore = fixture.sessions.writtenKeys.length;
+        final sessionBefore = fixture.chat.chatContext.sessionKey;
         final replacement = fixture.chat.connect(_userId,
             accessToken: _nextAccessToken);
         await _flush(tester);
-        expect(firstError, isA<ConnectionCanceledException>());
-        expect(timers.single.isActive, isFalse);
-        expect(previous.closes, _one);
-        final closes = previous.closes;
+        await first;
+        await oldLogin;
+        expect(resumed, isTrue);
+        expect(fixture.sessions.writtenKeys.length, writesBefore);
+        expect(fixture.chat.chatContext.sessionKey, sessionBefore);
+        expect(newLogin!.isCompleted, isFalse);
+        expect(fixture.handler.connectedUsers, isEmpty);
+        if (barrierStage == _beforeSessionWrite) {
+          expect(fixture.sessions.writtenKeys, isEmpty);
+          if (cache) expect((fixture.chat.dbManager as _CachedDB).users, isEmpty);
+        }
+        fixture.deviceTokens.onResumed = null;
+        fixture.dispatcher.onResumed = null;
         await fixture.sockets.last.login();
         await _flush(tester);
         expect((await replacement).userId, _userId);
-        await tester.pump(_loginTimeout);
-        await first;
-        expect(fixture.connection.isConnected(), isTrue);
-        expect(fixture.sockets.last.connected, isTrue);
-        expect(fixture.sockets.last.closes, closes);
+        expect(fixture.handler.connectedUsers, [_userId]);
         fixture.dispose();
         await _flush(tester);
       });
-
-      for (final barrierStage in _loginBarriers) {
-        testWidgets('replacement rejects paused LOGI $barrierStage cache=$cache hooks=$hooks',
-            (tester) async {
-          final barrier = Completer<void>();
-          var loginInfos = _none;
-          Completer<User>? newLogin;
-          late _Fixture fixture;
-          fixture = _Fixture(useCache: cache, onLoginInfo: () {
-            loginInfos++;
-            if (loginInfos == _two) {
-              newLogin = fixture.chat.chatContext.loginCompleter;
-              barrier.complete();
-            }
-          });
-          if (hooks) fixture.chat.networkPathHooks = _Hooks();
-          final first = expectLater(fixture.chat.connect(_userId,
-              accessToken: _firstAccessToken),
-              throwsA(isA<ConnectionCanceledException>()));
-          await _flush(tester);
-          if (barrierStage == _beforeSessionWrite) {
-            fixture.deviceTokens.barrier = barrier;
-          } else {
-            fixture.dispatcher.barrier = barrier;
-          }
-          var resumed = false;
-          final previous = fixture.sockets.last;
-          void onResumed() {
-            resumed = true;
-            expectSync(newLogin, isNotNull);
-            expectSync(newLogin!.isCompleted, isFalse);
-            expectSync(fixture.starts, _one);
-          }
-          if (barrierStage == _beforeSessionWrite) {
-            fixture.deviceTokens.onResumed = onResumed;
-          } else {
-            fixture.dispatcher.onResumed = onResumed;
-          }
-          final oldLogin = previous.data('$_loginCommand${jsonEncode({
-            ..._loginPayload, _sessionKeyField: _nextSessionKey,
-          })}');
-          await _flush(tester);
-          expect(resumed, isFalse);
-          final writesBefore = fixture.sessions.writtenKeys.length;
-          final sessionBefore = fixture.chat.chatContext.sessionKey;
-          final replacement = fixture.chat.connect(_userId,
-              accessToken: _nextAccessToken);
-          await _flush(tester);
-          await first;
-          await oldLogin;
-          expect(resumed, isTrue);
-          expect(fixture.sessions.writtenKeys.length, writesBefore);
-          expect(fixture.chat.chatContext.sessionKey, sessionBefore);
-          expect(newLogin!.isCompleted, isFalse);
-          expect(fixture.handler.connectedUsers, isEmpty);
-          if (barrierStage == _beforeSessionWrite) {
-            expect(fixture.sessions.writtenKeys, isEmpty);
-            if (cache) expect((fixture.chat.dbManager as _CachedDB).users, isEmpty);
-          }
-          fixture.deviceTokens.onResumed = null;
-          fixture.dispatcher.onResumed = null;
-          await fixture.sockets.last.login();
-          await _flush(tester);
-          expect((await replacement).userId, _userId);
-          expect(fixture.handler.connectedUsers, [_userId]);
-          fixture.dispose();
-          await _flush(tester);
-        });
-      }
     }
+  }
 
-    for (final phase in _connectionPhases) {
-      for (final token in <String?>[_nextAccessToken, null]) {
-        testWidgets('omitted hosts survive $phase tokenOmitted=${token == null} hooks=$hooks',
-            (tester) async {
-          final fixture = _Fixture();
-          if (hooks) fixture.chat.networkPathHooks = _Hooks();
-          fixture.chat.chatContext
-            ..accessToken = _firstAccessToken
-            ..apiHost = _nextApiHost
-            ..wsHost = _nextWsHost;
-          final pending = _setCredentialPhase(fixture, phase);
-          final cancelled = pending == null ? null : expectLater(pending.future,
-              throwsA(isA<ConnectionCanceledException>()));
-          final replacement = fixture.chat.connect(_userId, accessToken: token);
-          await _flush(tester);
-          if (cancelled != null) await cancelled;
-          expect(fixture.starts, _one);
-          expect(fixture.sockets.last.loginAccessToken, token);
-          expect(fixture.chat.chatContext.apiHost, _nextApiHost);
-          expect(fixture.chat.chatContext.wsHost, _nextWsHost);
-          expect(fixture.sockets.last._url, startsWith(_nextWsHost));
-          await fixture.sockets.last.login();
-          await _flush(tester);
-          final user = await replacement;
-          expect(await fixture.chat.connect(_userId, accessToken: token), same(user));
-          expect(fixture.starts, _one);
-          fixture.dispose();
-          await _flush(tester);
-        });
-      }
-
-      testWidgets('shouldProceed cancels after $phase close hooks=$hooks',
+  for (final phase in _connectionPhases) {
+    for (final token in <String?>[_nextAccessToken, null]) {
+      testWidgets('omitted hosts survive $phase tokenOmitted=${token == null}',
           (tester) async {
-        var loginInfos = _none;
-        final fixture = _Fixture(onLoginInfo: () { loginInfos++; });
-        if (hooks) fixture.chat.networkPathHooks = _Hooks();
-        fixture.chat.chatContext.accessToken = _nextAccessToken;
+        final fixture = _Fixture();
+        fixture.chat.chatContext
+          ..accessToken = _firstAccessToken
+          ..apiHost = _nextApiHost
+          ..wsHost = _nextWsHost;
         final pending = _setCredentialPhase(fixture, phase);
         final cancelled = pending == null ? null : expectLater(pending.future,
             throwsA(isA<ConnectionCanceledException>()));
-        var allowed = true;
-        final close = Completer<bool>();
-        fixture.sockets.last.closeBarrier = close;
-        final replacement = expectLater(fixture.chat.connect(_userId,
-            accessToken: _thirdAccessToken, shouldProceed: () => allowed),
-            throwsA(isA<ConnectionCanceledException>()));
+        final replacement = fixture.chat.connect(_userId, accessToken: token);
         await _flush(tester);
         if (cancelled != null) await cancelled;
-        expect(fixture.sockets.last.closes, _one);
-        allowed = false;
-        close.complete(true);
+        expect(fixture.starts, _one);
+        expect(fixture.sockets.last.loginAccessToken, token);
+        expect(fixture.chat.chatContext.apiHost, _nextApiHost);
+        expect(fixture.chat.chatContext.wsHost, _nextWsHost);
+        expect(fixture.sockets.last._url, startsWith(_nextWsHost));
+        await fixture.sockets.last.login();
         await _flush(tester);
-        await replacement;
-        expect(loginInfos, _none);
-        expect(fixture.starts, _none);
-        expect(fixture.connection.isDisconnected(), isTrue);
+        final user = await replacement;
+        expect(await fixture.chat.connect(_userId, accessToken: token), same(user));
+        expect(fixture.starts, _one);
         fixture.dispose();
         await _flush(tester);
       });
     }
 
-    testWidgets('shouldProceed cancels during transport preparation hooks=$hooks',
-        (tester) async {
-      var allowed = true;
-      final fixture = _Fixture(onLoginInfo: () { allowed = false; });
-      if (hooks) fixture.chat.networkPathHooks = _Hooks();
-      final replacement = expectLater(fixture.chat.connect(_userId,
-          accessToken: _thirdAccessToken, shouldProceed: () => allowed),
-          throwsA(isA<ConnectionCanceledException>()));
-      await _flush(tester);
-      await replacement;
-      expect(fixture.starts, _none);
-      expect(fixture.connection.isDisconnected(), isTrue);
-      fixture.dispose();
-      await _flush(tester);
-    });
 
-    testWidgets('shouldProceed invalidates in-flight LOGI hooks=$hooks',
-        (tester) async {
-      var allowed = true;
-      final fixture = _Fixture();
-      if (hooks) fixture.chat.networkPathHooks = _Hooks();
-      final replacement = expectLater(fixture.chat.connect(_userId,
-          accessToken: _thirdAccessToken, shouldProceed: () => allowed),
-          throwsA(isA<ConnectionCanceledException>()));
-      await _flush(tester);
-      final barrier = Completer<void>();
-      fixture.deviceTokens.barrier = barrier;
-      final login = fixture.sockets.last.login();
-      await _flush(tester);
-      allowed = false;
-      barrier.complete();
-      await _flush(tester);
-      await login;
-      expect(fixture.sessions.writtenKeys, isEmpty);
-      expect(fixture.chat.chatContext.loginCompleter!.isCompleted, isFalse);
-      await fixture.connection.disconnect(logout: true);
-      await _flush(tester);
-      await replacement;
-      expect(fixture.connection.isDisconnected(), isTrue);
-      expect(fixture.handler.connectedUsers, isEmpty);
-      fixture.dispose();
-      await _flush(tester);
-    });
   }
+
+
+
+
 
   for (final replaceSocket in _cacheModes) {
     testWidgets('stale timeout checks request and socket identity socket=$replaceSocket',
@@ -417,7 +327,7 @@ void _registerCredentialRaceTests() {
       final pending = fixture.chat.chatContext.loginCompleter!;
       if (replaceSocket) {
         fixture.connection.webSocketClient =
-            fixture.connection.createWebSocketClient(null);
+            fixture.connection.createWebSocketClient();
       } else {
         fixture.chat.chatContext.loginCompleter = Completer<User>();
       }
@@ -461,47 +371,4 @@ void _registerCredentialRaceTests() {
     await _flush(tester);
   });
 
-  for (final allowedAfterClose in _hookModes) {
-    testWidgets('public shouldProceed gates authenticated replacement allowed=$allowedAfterClose',
-        (tester) async {
-      final sdk = SendbirdChat.create();
-      await sdk.init(appId: _appId,
-          options: SendbirdChatOptions(useCollectionCaching: false));
-      var loginInfos = _none;
-      final fixture = _Fixture(chat: sdk.chat, onLoginInfo: () { loginInfos++; });
-      final second = sdk.connect(_userId, accessToken: _nextAccessToken);
-      await _flush(tester);
-      await fixture.sockets.last.login();
-      await _flush(tester);
-      await second;
-      var allowed = true;
-      final close = Completer<bool>();
-      fixture.sockets.last.closeBarrier = close;
-      final third = sdk.connect(_userId, accessToken: _thirdAccessToken,
-          shouldProceed: () => allowed);
-      final cancelled = allowedAfterClose ? null : expectLater(third,
-          throwsA(isA<ConnectionCanceledException>()));
-      await _flush(tester);
-      expect(loginInfos, _one);
-      expect(fixture.starts, _one);
-      allowed = allowedAfterClose;
-      close.complete(true);
-      await _flush(tester);
-      if (cancelled != null) {
-        await cancelled;
-        expect(loginInfos, _one);
-        expect(fixture.starts, _one);
-        expect(fixture.connection.isDisconnected(), isTrue);
-      } else {
-        expect(loginInfos, _two);
-        expect(fixture.starts, _two);
-        await fixture.sockets.last.login();
-        await _flush(tester);
-        expect((await third).userId, _userId);
-        expect(fixture.connection.isConnected(), isTrue);
-      }
-      fixture.dispose();
-      await _flush(tester);
-    });
-  }
 }

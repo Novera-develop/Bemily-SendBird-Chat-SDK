@@ -30,11 +30,11 @@ void _registerBackgroundRecoveryTests() {
   testWidgets('W21 event sequence is captured before asynchronous delivery',
       (tester) async {
     final fixture = _Fixture();
-    final first = fixture.connection.networkReconnect.createSdkAttempt();
+    final first = fixture.connection.socketTracker.createSdkAttempt();
     first.started();
     final firstSequence = fixture.adapter.connectionSnapshot.sequence;
     first.authenticated();
-    final second = fixture.connection.networkReconnect.createSdkAttempt();
+    final second = fixture.connection.socketTracker.createSdkAttempt();
     final secondSequence = fixture.adapter.connectionSnapshot.sequence;
     first.closed();
     second.started();
@@ -44,7 +44,7 @@ void _registerBackgroundRecoveryTests() {
     expect(authenticated.first.sequence, firstSequence);
     expect(authenticated.last.sequence, secondSequence);
     expect(fixture.events.singleWhere((event) =>
-        event.kind == NetworkReconnectEventKind.websocketClosed).sequence,
+        event.kind == SocketEventKind.websocketClosed).sequence,
         isNull);
     fixture.dispose();
     await _flush(tester);

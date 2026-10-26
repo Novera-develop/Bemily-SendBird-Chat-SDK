@@ -2,37 +2,16 @@ part of '../network_path_reconnect_test.dart';
 
 const _appId = 'network-path-test';
 const _userId = 'network-path-user';
-const _scope = 'first-scope';
-const _nextScope = 'next-scope';
-const _firstGeneration = 1;
-const _nextGeneration = 2;
 const _none = 0;
 const _one = 1;
 const _two = 2;
 const _budget = Duration(seconds: 5);
-const _afterDeadline = Duration(seconds: 8);
 const _legacyReconnectDelay = Duration(seconds: 1);
 const _socketUrl = 'wss://localhost';
 const _loginCommand = 'LOGI';
-const _errorCommand = 'EROR';
-const _codeField = 'code';
-const _invalidUpdateCommand = 'MESG{}';
-const _closeTimeout = Duration(milliseconds: 501);
-const _thirdGeneration = 3;
-const _scopeHistoryLimit = 4096;
-const _scopeHistoryPrefix = 'cancelled-scope-';
-const _thirdScope = 'third-scope';
-const _cancelAction = 'cancelScope';
 const _logoutAction = 'logout';
-const _initAction = 'init';
-const _cancelActions = [_cancelAction, _logoutAction, _initAction];
-const _closeFailureModes = [false, true];
-const _recoveryStartedModes = [false, true];
 const _pingFailure = 'ping sink failed';
-const _pingCommand = 'PING';
 const _pingTick = Duration(seconds: 1);
-const _fourthGeneration = 4;
-const _initialSdkGeneration = 0;
 const _hookModes = [false, true];
 const _ackRequestId = 'retained-transport-ack';
 const _requestIdField = 'req_id';
@@ -43,16 +22,10 @@ const _nextSessionKey = 'test-session-key-next';
 const _nextApiHost = 'next-api.localhost';
 const _nextWsHost = 'wss://next.localhost';
 const _nextNickname = 'next-nickname';
-const _credentialFields = ['apiHost', 'wsHost', 'nickname', 'sessionKey'];
-const _apiHostIndex = 0;
-const _wsHostIndex = 1;
-const _nicknameIndex = 2;
-const _sessionKeyIndex = 3;
 const _tokenHeader = 'SENDBIRD-WS-TOKEN';
 const _authHeader = 'SENDBIRD-WS-AUTH';
 const _ephemeralPort = 0;
 const _localSocketScheme = 'ws';
-final _authErrorPayload = {_codeField: SendbirdError.accessTokenNotValid};
 const _userIdField = 'user_id';
 const _nicknameField = 'nickname';
 const _loginTsField = 'login_ts';
@@ -93,13 +66,13 @@ class _Fixture {
   final Chat chat;
   final sockets = <_Socket>[];
   final channels = <_Channel>[];
-  final events = <NetworkReconnectEvent>[];
+  final events = <SocketEvent>[];
   late final ConnectionManager connection;
   late final _Dispatcher dispatcher;
   late final _Handler handler;
   late final _Sessions sessions;
   late final _DeviceTokens deviceTokens;
-  late final StreamSubscription<NetworkReconnectEvent> subscription;
+  late final StreamSubscription<SocketEvent> subscription;
 
   _Fixture({Duration Function()? clock, Chat? chat, bool useTransport = false,
       bool useLocalServer = false, bool useCache = false,
@@ -126,7 +99,6 @@ class _Fixture {
         return WebSocketClient(
           chat: chat,
           chatContext: chat.chatContext,
-          managedReconnect: true,
           onWebSocketConnected: () {},
           onWebSocketData: data,
           onWebSocketClosed: closed,
@@ -149,19 +121,11 @@ class _Fixture {
     subscription = adapter.events.listen(events.add);
   }
 
-  NetworkReconnectAdapter get adapter => connection.networkReconnect;
-  Duration get deadline => adapter.now + _budget;
+  SocketTracker get adapter => connection.socketTracker;
   int get starts => sockets.fold(_none, (total, socket) => total + socket.starts);
-  Iterable<NetworkReconnectEvent> get authenticated => events.where(
-      (event) => event.kind == NetworkReconnectEventKind.authenticated);
-  NetworkReconnectAttempt key({String scope = _scope,
-      int generation = _firstGeneration,
-      int attempt = NetworkReconnectAttempt.initialAttempt}) =>
-      NetworkReconnectAttempt(scope: scope, sdkInstance: chat.sdkInstance,
-          generation: generation, attempt: attempt);
-
+  Iterable<SocketEvent> get authenticated => events.where(
+      (event) => event.kind == SocketEventKind.authenticated);
   void dispose() {
-    connection.networkReconnect.cancelAll();
     connection.cancelReconnectTimers();
     subscription.cancel();
   }
@@ -276,7 +240,7 @@ class _Dispatcher implements EventDispatcher {
   Completer<void>? disconnectBarrier;
   Completer<void>? reconnectingBarrier;
   void Function()? onResumed;
-  final completedKeys = <NetworkReconnectAttempt?>[];
+  final completedKeys = <Object?>[];
   _Dispatcher(this.chat);
   @override
   Future<void> onConnecting() async {}
@@ -290,7 +254,7 @@ class _Dispatcher implements EventDispatcher {
   Future<void> onReconnected(LoginEvent event) async {
     await barrier?.future;
     onResumed?.call();
-    completedKeys.add(chat.connectionManager.callbackAttempt);
+    completedKeys.add(chat.connectionManager.callbackSocket);
   }
   @override
   Future<void> onLogin(LoginEvent event) => onReconnected(event);
@@ -323,7 +287,7 @@ class _Sessions implements SessionManager {
   @override
   void cleanUp() {}
   @override
-  Future<String?> getSessionKey({bool Function()? shouldProceed}) async {
+  Future<String?> getSessionKey() async {
     final pending = barrier;
     if (pending != null) return pending.future;
     return _userId;
@@ -336,39 +300,18 @@ class _Sessions implements SessionManager {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _Hooks implements NetworkPathHooks {
-  _Hooks({this.ownsReconnect = true});
-  final bool ownsReconnect;
-  final instances = <Object>[];
-  final online = <bool>[];
-  final wifi = <bool>[];
-  final cellular = <bool>[];
-  final vpn = <bool>[];
-  @override
-  Future<bool> onConnectivityChanged({required Object sdkInstance,
-      required bool hasWifi, required bool hasCellular, required bool hasVpn,
-      required bool isOnline}) async {
-    instances.add(sdkInstance);
-    online.add(isOnline);
-    wifi.add(hasWifi);
-    cellular.add(hasCellular);
-    vpn.add(hasVpn);
-    return ownsReconnect;
-  }
-}
-
 class _Handler extends ConnectionHandler {
   _Handler(this.connection);
   final ConnectionManager connection;
-  final keys = <NetworkReconnectAttempt?>[];
+  final keys = <Object?>[];
   final connectedUsers = <String>[];
   @override
   void onConnected(String userId) {
-    keys.add(connection.callbackAttempt);
+    keys.add(connection.callbackSocket);
     connectedUsers.add(userId);
   }
   @override
-  void onReconnectSucceeded() { keys.add(connection.callbackAttempt); }
+  void onReconnectSucceeded() { keys.add(connection.callbackSocket); }
   @override
   void onDisconnected(String userId) {}
   @override

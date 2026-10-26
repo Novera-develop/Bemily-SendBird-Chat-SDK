@@ -17,9 +17,9 @@ const _secondRequestId = 'connection-test-second-request';
 const _zeroCalls = 0;
 const _oneCall = 1;
 const _twoTimers = 2;
-const _beforeDetection = Duration(milliseconds: 2900);
+const _beforeDetection = Duration(milliseconds: 4900);
 const _untilDetection = Duration(milliseconds: 100);
-const _detectionTime = Duration(seconds: 3);
+const _detectionTime = Duration(seconds: 5);
 const _requestOffset = Duration(seconds: 1);
 const _afterTimeout = Duration(seconds: 31);
 const _reservedRoom = 'reserved-room';
@@ -84,7 +84,7 @@ void main() {
     expect(fixture.timers.where((timer) => timer.isActive), isEmpty);
   });
 
-  testWidgets('dead socket fails at three seconds before close finishes',
+  testWidgets('dead socket fails at five seconds before close finishes',
       (tester) async {
     final fixture = _Fixture();
     Object? error;
@@ -107,7 +107,7 @@ void main() {
     expect(fixture.socket.closeCalls, _oneCall);
   });
 
-  testWidgets('ACK at 2.9 seconds succeeds and cancels detection',
+  testWidgets('ACK at 4.9 seconds succeeds and cancels detection',
       (tester) async {
     final fixture = _Fixture();
     Command? received;

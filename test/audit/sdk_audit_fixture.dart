@@ -39,7 +39,7 @@ abstract class A {
   static const timeout = Duration(seconds: 10);
   static const local = Duration(milliseconds: 100);
   static const tick = Duration(milliseconds: 1);
-  static const dead = Duration(seconds: 3);
+  static const dead = Duration(seconds: 5);
   static const ackTimeout = 10;
   static const empty = '';
   static const separator = '|';
@@ -452,6 +452,11 @@ class AuditCommands extends CommandManager {
 
 class AuditSocket extends Fake implements WebSocketClient {
   AuditSocket(this.data, this.trace);
+  @override
+  void connect({required String url, String? accessToken, String? sessionKey,
+      bool reconnect = false, OnWebSocketTransportStart? onTransportStart}) {
+    onTransportStart?.call(() {});
+  }
   final OnWebSocketData data;
   final Trace trace;
   @override

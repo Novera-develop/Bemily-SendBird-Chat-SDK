@@ -103,7 +103,6 @@ class Chat with WidgetsBindingObserver {
   // and processed after the current one finishes (intermediate events discarded).
   bool _isHandlingConnectivityChange = false;
   List<ConnectivityResult>? _pendingConnectivityResults;
-  NetworkPathHooks? networkPathHooks;
   late Object sdkInstance = this;
 
   // This allows a value of type T or T? to be treated as a value of type T?.
@@ -267,17 +266,6 @@ class Chat with WidgetsBindingObserver {
       List<ConnectivityResult> results) async {
     _isHandlingConnectivityChange = true;
     try {
-      final hooks = networkPathHooks;
-      if (hooks != null) {
-        final ownsReconnect = await hooks.onConnectivityChanged(
-          sdkInstance: sdkInstance,
-          hasWifi: results.contains(ConnectivityResult.wifi),
-          hasCellular: results.contains(ConnectivityResult.mobile),
-          hasVpn: results.contains(ConnectivityResult.vpn),
-          isOnline: results.any((result) => result != ConnectivityResult.none),
-        );
-        if (ownsReconnect) return;
-      }
       if (results.contains(ConnectivityResult.mobile) ||
           results.contains(ConnectivityResult.wifi) ||
           results.contains(ConnectivityResult.ethernet) ||

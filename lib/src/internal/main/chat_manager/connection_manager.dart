@@ -35,61 +35,43 @@ class ConnectionManager {
   late WebSocketClient webSocketClient;
   late BaseConnectionState _currentState;
   Timer? _reconnectIfNeededTimer;
-  late final NetworkReconnectManager networkReconnect =
-      NetworkReconnectManager(this, clock: reconnectClock);
-  final Duration Function()? reconnectClock;
-  static final _attemptZone = Object();
   static final _socketZone = Object();
   static final _sdkAttemptZone = Object();
   static final _sdkReservationZone = Object();
-  NetworkSocketAttempt? _sdkAttempt;
-  NetworkSocketAttempt? _sdkReservation;
+  SocketAttempt? _sdkAttempt;
+  SocketAttempt? _sdkReservation;
   Object? _socketIdentity;
-  bool Function()? _socketShouldProceed;
-  bool _socketInvalidated = false;
-  Future<void> Function()? _scheduledReconnectAction;
-  NetworkReconnectAttempt? _scheduledAttempt;
   final WebSocketClient Function(OnWebSocketData, OnWebSocketClosed,
       OnWebSocketError)? socketFactory;
 
-  NetworkReconnectAttempt? get callbackAttempt =>
-      Zone.current[_attemptZone] as NetworkReconnectAttempt?;
+  late final SocketTracker socketTracker = SocketTracker(clock: reconnectClock);
+  final Duration Function()? reconnectClock;
+  NetworkConnectionSnapshot get connectionSnapshot => socketTracker.connectionSnapshot;
   Object? get callbackSocket => Zone.current[_socketZone];
+  Object? get socketIdentity => _socketIdentity;
 
-  bool isCallbackCurrent(NetworkReconnectAttempt? key, Object? socket) =>
+  bool isCallbackCurrent(Object? socket) =>
       (socket == null || identical(socket, _socketIdentity)) &&
-      (_callbackSdkAttempt == null || identical(_callbackSdkAttempt, _sdkAttempt)) &&
-      (key == null || networkReconnect.isCurrent(key)) &&
-      _socketShouldProceed?.call() != false;
+      (_callbackSdkAttempt == null || identical(_callbackSdkAttempt, _sdkAttempt));
 
-  void checkConnectAllowed(bool Function()? shouldProceed) {
-    if (shouldProceed?.call() == false) throw ConnectionCanceledException();
+  bool matchesSessionCredentials(String userId, {String? accessToken,
+      String? apiHost, String? wsHost}) {
+    final context = chat.chatContext;
+    return context.currentUserId == userId && context.accessToken == accessToken &&
+        context.apiHost == (apiHost ?? context.apiHost) &&
+        context.wsHost == (wsHost ?? context.wsHost);
   }
 
   void authenticatedSocket() => _callbackSdkAttempt?.authenticated();
 
-  void invalidateSocketCallbacks() {
-    networkReconnect.invalidateConnection(preserveReconnect: true);
-    _socketIdentity = Object();
-    _socketInvalidated = true;
-    changeState(DisconnectedState(chat: chat));
-  }
-
   void cancelReconnectTimers() => _cancelReconnectTimers();
 
-  Future<void> startOwnedReconnect(NetworkReconnectAttempt key) =>
-      _startOwnedReconnect(key);
-
-  void startScheduledReconnectNow(NetworkReconnectAttempt key) =>
-      _startScheduledReconnectNow(key);
-
   ConnectionManager({required this.chat, this.socketFactory, this.reconnectClock}) {
-    webSocketClient = createWebSocketClient(null);
+    webSocketClient = createWebSocketClient();
     _currentState = DisconnectedState(chat: chat);
   }
 
-  WebSocketClient createWebSocketClient(NetworkReconnectAttempt? key) =>
-      _createWebSocketClient(key);
+  WebSocketClient createWebSocketClient() => _createWebSocketClient();
 
   bool changeState(BaseConnectionState state) {
     if (_currentState == state) {
@@ -127,27 +109,13 @@ class ConnectionManager {
     String? accessToken,
     String? apiHost,
     String? wsHost,
-    bool Function()? shouldProceed,
   }) async {
-    checkConnectAllowed(shouldProceed);
-    _socketShouldProceed = shouldProceed;
-    if (networkReconnect.ownsReconnect) {
-      if (networkReconnect.matchesCredentials(userId, accessToken: accessToken,
-          nickname: nickname, apiHost: apiHost, wsHost: wsHost)) {
-        await networkReconnect.currentFuture;
-        final user = chat.chatContext.currentUser;
-        if (user == null) throw ConnectionRequiredException();
-        return user;
-      }
-      networkReconnect.cancelAll();
-    }
     return await _currentState.connect(
       userId,
       nickname: nickname,
       accessToken: accessToken,
       apiHost: apiHost,
       wsHost: wsHost,
-      shouldProceed: shouldProceed,
     );
   }
 
@@ -156,10 +124,6 @@ class ConnectionManager {
   }
 
   Future<bool> reconnect({required bool reset}) async {
-    if (networkReconnect.ownsReconnect) {
-      await networkReconnect.currentFuture;
-      return true;
-    }
     return await _currentState.reconnect(reset: reset);
   }
 
@@ -174,13 +138,9 @@ class ConnectionManager {
   ///   5. Cancel the _reconnectIfNeededTimer that _onWebSocketClosed just set,
   ///      since we drive the reconnect ourselves.
   ///   6. Start doReconnect(reset: true) for a fresh connection with no backoff.
-  Future<void> reconnectForNetworkChange({bool Function()? shouldProceed}) async {
-    bool canReconnect() => !chat.isBackground && shouldProceed?.call() != false;
+  Future<void> reconnectForNetworkChange() async {
+    bool canReconnect() => !chat.isBackground;
     if (!canReconnect()) return;
-    if (networkReconnect.ownsReconnect) {
-      await networkReconnect.currentFuture;
-      return;
-    }
     sbLog.i(StackTrace.current);
 
     if (chat.chatContext.currentUser == null &&
@@ -210,7 +170,7 @@ class ConnectionManager {
 
     // 6. Start a fresh reconnect immediately (reset: true resets backoff counter).
     if (!canReconnect()) return;
-    await doReconnect(reset: true, shouldProceed: canReconnect);
+    await doReconnect(reset: true, foregroundOnly: true);
   }
 
   Future<void> enterBackground() async {
@@ -253,36 +213,9 @@ class ConnectionManager {
     String? apiHost,
     String? wsHost,
     bool isDelayedConnecting = false,
-    NetworkReconnectAttempt? ownedAttempt,
-    bool Function()? shouldProceed,
     bool Function()? shouldStart,
   }) async {
-    shouldProceed ??= _socketShouldProceed;
-    checkConnectAllowed(shouldProceed);
-    checkConnectAllowed(shouldStart);
-    if (ownedAttempt == null && networkReconnect.ownsReconnect) {
-      await networkReconnect.currentFuture;
-      final user = chat.chatContext.currentUser;
-      if (user == null) throw ConnectionRequiredException();
-      return user;
-    }
-    if (ownedAttempt == null && _socketInvalidated) {
-      final waitingSocket = _socketIdentity;
-      await networkReconnect.transportClosed;
-      if (!identical(waitingSocket, _socketIdentity)) {
-        throw ConnectionCanceledException();
-      }
-      if (networkReconnect.ownsReconnect) {
-        await networkReconnect.currentFuture;
-        final user = chat.chatContext.currentUser;
-        if (user == null) throw ConnectionRequiredException();
-        return user;
-      }
-      webSocketClient = createWebSocketClient(null);
-    }
-    checkConnectAllowed(shouldProceed);
-    checkConnectAllowed(shouldStart);
-    _socketShouldProceed = shouldProceed;
+    if (shouldStart?.call() == false) throw ConnectionCanceledException();
     final socket = _socketIdentity;
     sbLog.i(StackTrace.current, 'userId: $userId');
 
@@ -313,10 +246,7 @@ class ConnectionManager {
       'include_poll_details': '1',
     };
     params.addAll(await _getWebSocketParams(userId: userId));
-    if (shouldStart?.call() == false || !_isSocketStartCurrent(ownedAttempt, socket)) {
-      if (identical(socket, _socketIdentity) && shouldProceed?.call() == false) {
-        await doDisconnect(clear: true);
-      }
+    if (shouldStart?.call() == false || !_isSocketStartCurrent(socket)) {
       throw ConnectionCanceledException();
     }
 
@@ -328,18 +258,12 @@ class ConnectionManager {
 
       chat.chatContext.connectingUrl = url;
       chat.statManager.startWsConnectStat(hostUrl: url);
-      _connectSocket(ownedAttempt, url, accessToken: accessToken);
-    }, (e, s) => _handleConnectError(e, ownedAttempt, socket, login,
+      _connectSocket(url, accessToken: accessToken);
+    }, (e, s) => _handleConnectError(e, socket, login,
         userId, url, isDelayedConnecting));
 
     final User user;
-    if (ownedAttempt != null) {
-      await networkReconnect.joinGeneration(ownedAttempt.generation);
-      if (!isCallbackCurrent(ownedAttempt, socket)) {
-        throw ConnectionCanceledException();
-      }
-      user = chat.chatContext.currentUser!;
-    } else if (isDelayedConnecting) {
+    if (isDelayedConnecting) {
       user = await login.future;
     } else {
       user = await _waitForLogin(login, socket, url);
@@ -368,10 +292,8 @@ class ConnectionManager {
     int? reasonCodeForDelayedConnectingState,
     String? messageForDelayedConnectingState,
   }) async {
-    if (clear || logout) _socketShouldProceed = null;
-    networkReconnect.invalidateConnection();
-    if (logout || clear || networkReconnect.ownsReconnect) {
-      networkReconnect.cancelAll();
+    socketTracker.invalidateConnection();
+    if (logout || clear) {
       _socketIdentity = Object();
     }
     sbLog.i(
@@ -471,29 +393,15 @@ class ConnectionManager {
   }
 
   Future<bool> doReconnect({
-    bool Function()? shouldProceed,
+    bool foregroundOnly = false,
     bool reset = false,
     bool isDelayedConnecting = false,
-    NetworkReconnectAttempt? ownedAttempt,
   }) async {
-    if (networkReconnect.ownsReconnect && ownedAttempt == null) {
-      await networkReconnect.currentFuture;
-      return true;
-    }
-    if (ownedAttempt == null && isReconnecting() &&
-        _sdkAttempt?.isActive == true && webSocketClient.isConnected()) return true;
-    if (ownedAttempt == null && _socketInvalidated) {
-      final waitingSocket = _socketIdentity;
-      await networkReconnect.transportClosed;
-      if (!identical(waitingSocket, _socketIdentity)) return false;
-      if (networkReconnect.ownsReconnect) {
-        await networkReconnect.currentFuture;
-        return true;
-      }
-      webSocketClient = createWebSocketClient(null);
-    }
+    if (foregroundOnly && chat.isBackground) return false;
+    if (isReconnecting() && _sdkAttempt?.isActive == true &&
+        webSocketClient.isConnected()) return true;
     final socket = _socketIdentity;
-    if (shouldProceed?.call() == false || !isCallbackCurrent(ownedAttempt, socket)) return false;
+    if (!isCallbackCurrent(socket)) return false;
     sbLog.i(StackTrace.current,
         'reset: $reset, isDelayedConnecting: $isDelayedConnecting');
 
@@ -530,21 +438,13 @@ class ConnectionManager {
     reconnectTimer?.cancel();
     final delay = Duration(seconds: chat.chatContext.reconnectTask!.backOffPeriod);
     bool canStart() {
-      if (shouldProceed?.call() != false) return true;
+      if (!foregroundOnly || !chat.isBackground) return true;
       _cancelScheduledSdkReconnect(socket);
       return false;
     }
     Future<void> reconnectAction() async {
       if (!canStart()) return;
-      if (!_isSocketStartCurrent(ownedAttempt, socket)) {
-        if (identical(socket, _socketIdentity) &&
-            _socketShouldProceed?.call() == false) {
-          await doDisconnect(clear: true);
-        }
-        return;
-      }
-      _scheduledReconnectAction = null;
-      _scheduledAttempt = null;
+      if (!_isSocketStartCurrent(socket)) return;
       try {
         sbLog.i(
           StackTrace.current,
@@ -554,7 +454,7 @@ class ConnectionManager {
         if (chat.chatContext.reconnectTask?.retryCount == 1) {
           if (!doNotCallReconnectStartedEvent) {
             await chat.eventDispatcher.onReconnecting();
-            if (!canStart() || !_isSocketStartCurrent(ownedAttempt, socket)) return;
+            if (!canStart() || !_isSocketStartCurrent(socket)) return;
             chat.eventManager.notifyReconnectStarted();
           }
         }
@@ -568,34 +468,26 @@ class ConnectionManager {
               apiHost: chat.chatContext.apiHost,
               wsHost: chat.chatContext.wsHost,
               isDelayedConnecting: true,
-              ownedAttempt: ownedAttempt,
-              shouldProceed: _socketShouldProceed,
               shouldStart: canStart,
             );
           }
         } else {
-          await _reconnect(ownedAttempt: ownedAttempt, shouldProceed: canStart);
+          await _reconnect(canStart: canStart);
         }
       } catch (error) {
-        if (ownedAttempt == null) {
-          if (error is ConnectionCanceledException) return;
-          rethrow;
-        }
-        networkReconnect.fail(ownedAttempt, error);
+        if (error is ConnectionCanceledException) return;
+        rethrow;
       }
     }
-    _scheduledReconnectAction = reconnectAction;
-    _scheduledAttempt = ownedAttempt;
-    reconnectTimer = _scheduleSocketReconnect(ownedAttempt, delay, reconnectAction);
+    reconnectTimer = _scheduleSocketReconnect(delay, reconnectAction);
     return true;
   }
 
-  Future<void> _reconnect({NetworkReconnectAttempt? ownedAttempt,
-      bool Function()? shouldProceed}) async {
+  Future<void> _reconnect({required bool Function() canStart}) async {
     final socket = _socketIdentity;
     // ===== Reconnect =====
-    final sessionKey = await chat.sessionManager.getSessionKey(shouldProceed: shouldProceed);
-    if (shouldProceed?.call() == false || !_isSocketStartCurrent(ownedAttempt, socket)) return;
+    final sessionKey = await chat.sessionManager.getSessionKey();
+    if (!canStart() || !_isSocketStartCurrent(socket)) return;
     final params = {
       if (sessionKey == null) 'user_id': chat.chatContext.currentUserId,
       'SB-User-Agent': _sbUserAgentHeader,
@@ -607,7 +499,7 @@ class ConnectionManager {
     };
     params.addAll(await _getWebSocketParams(
         userId: chat.chatContext.currentUser?.userId ?? ''));
-    if (shouldProceed?.call() == false || !_isSocketStartCurrent(ownedAttempt, socket)) return;
+    if (!canStart() || !_isSocketStartCurrent(socket)) return;
 
     final url =
         '${chat.chatContext.wsHost}/?${Uri(queryParameters: params).query}';
@@ -620,7 +512,7 @@ class ConnectionManager {
         chat.chatContext.reconnectTask?.url = url;
       }
 
-      _connectSocket(ownedAttempt, url,
+      _connectSocket(url,
         accessToken: chat.chatContext.accessToken,
         sessionKey: sessionKey,
         reconnect: true,
@@ -629,11 +521,7 @@ class ConnectionManager {
       reconnectTimer?.cancel();
       reconnectTimer = null;
     }, (e, s) {
-      if (!isCallbackCurrent(ownedAttempt, socket)) return;
-      if (ownedAttempt != null) {
-        _onOwnedReconnectError(ownedAttempt, socket, e);
-        return;
-      }
+      if (!isCallbackCurrent(socket)) return;
       sbLog.e(StackTrace.current, 'e: $e');
 
       if (e is SendbirdException) {

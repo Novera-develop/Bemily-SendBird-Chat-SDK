@@ -34,8 +34,6 @@ class WebSocketClient {
   Timer? _pingTimer;
   Timer? _watchdogTimer;
   Timer? _forceCloseTimer; // Timer for force cleanup
-  HttpClient? _handshakeClient;
-  final bool managedReconnect;
   final WebSocketChannel Function(Uri)? channelFactory;
 
   int? connectedTs;
@@ -55,7 +53,6 @@ class WebSocketClient {
     required OnWebSocketClosed onWebSocketClosed,
     required OnWebSocketData onWebSocketData,
     required OnWebSocketError onWebSocketError,
-    this.managedReconnect = false,
     this.channelFactory,
   })  : _chat = chat,
         _chatContext = chatContext,
@@ -128,7 +125,7 @@ class WebSocketClient {
           protocols: protocols,
         );
 
-        if (reconnect && !managedReconnect) {
+        if (reconnect) {
           reconnectTimeoutCompleter = Completer();
           reconnectTimeoutCompleter.future.timeout(
               Duration(seconds: _chat.chatContext.options.connectionTimeout),
@@ -151,12 +148,10 @@ class WebSocketClient {
           headers['SENDBIRD-WS-TOKEN'] = accessToken;
         }
 
-        if (managedReconnect) _handshakeClient = HttpClient();
         _webSocketChannel = IOWebSocketChannel.connect(
           Uri.parse(url),
           headers: headers,
-          customClient: _handshakeClient,
-          connectTimeout: reconnect && !managedReconnect
+          connectTimeout: reconnect
               ? Duration(seconds: _chat.chatContext.options.connectionTimeout)
               : null,
         );
@@ -203,8 +198,6 @@ class WebSocketClient {
     int code = WebSocketStatus.normalClosure,
     String reason = '',
   }) async {
-    _handshakeClient?.close(force: true);
-    _handshakeClient = null;
     // Check if already closing or already closed
     WebSocketChannel? channelToClose;
     Completer<bool>? existingCompleter;
@@ -407,8 +400,6 @@ class WebSocketClient {
     _stopPing();
     _stopWatchdog();
     _cancelForceCloseTimer();
-    _handshakeClient?.close(force: true);
-    _handshakeClient = null;
     _isConnected = false;
 
     // Cancel stream subscription before nullifying channel

@@ -57,15 +57,20 @@ class SessionManager {
     await _encryptSessionKey(sessionKey);
   }
 
-  Future<String?> getSessionKey({bool Function()? shouldProceed}) async {
+  Future<String?> getSessionKey() async {
     sbLog.d(StackTrace.current);
 
     if (_chat.chatContext.sessionKey != null) {
       return _chat.chatContext.sessionKey;
     }
 
+    final socket = _chat.connectionManager.socketIdentity;
+    final login = _chat.chatContext.loginCompleter;
+    final userId = _chat.chatContext.currentUserId;
     final decryptedSessionKey = await _decryptSessionKey();
-    if (shouldProceed?.call() == false) return null;
+    if (!identical(socket, _chat.connectionManager.socketIdentity) ||
+        !identical(login, _chat.chatContext.loginCompleter) ||
+        userId != _chat.chatContext.currentUserId) return null;
     _chat.chatContext.sessionKey ??= decryptedSessionKey;
     return decryptedSessionKey;
   }

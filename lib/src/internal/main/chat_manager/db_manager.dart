@@ -237,23 +237,27 @@ class DBManager {
   }
 
   Future<User?> getLoginInfoByException(
-      String userId, SendbirdException e, {bool Function()? shouldProceed}) async {
+      String userId, SendbirdException e) async {
+    final connection = _chat.connectionManager;
+    final socket = connection.socketIdentity;
+    final loginRequest = _chat.chatContext.loginCompleter;
+    bool isCurrent() => identical(socket, connection.socketIdentity) &&
+        identical(loginRequest, _chat.chatContext.loginCompleter);
     User? user;
-    if (isEnabled() && shouldProceed?.call() != false) {
+    if (isEnabled() && isCurrent()) {
       if (e.code == SendbirdError.userNotExist ||
           e.code == SendbirdError.accessTokenNotValid ||
           e.code == SendbirdError.accessTokenRevoked) {
         await getDB().clear();
       } else {
         final login = await getDB().getLogin(userId);
-        if (shouldProceed?.call() == false) return null;
+        if (!isCurrent()) return null;
         if (login != null) {
           user = await getDB().getUser(userId);
-          if (shouldProceed?.call() == false) return null;
+          if (!isCurrent()) return null;
           if (user != null) {
-            final sessionKey = await _chat.sessionManager.getSessionKey(
-                shouldProceed: shouldProceed);
-            if (shouldProceed?.call() == false) return null;
+            final sessionKey = await _chat.sessionManager.getSessionKey();
+            if (!isCurrent()) return null;
             _chat.chatContext.currentUser = user;
             _chat.chatContext.currentUserId = user.userId;
             _chat.chatContext.services = login.services;

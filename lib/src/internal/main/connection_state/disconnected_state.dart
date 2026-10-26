@@ -29,7 +29,6 @@ class DisconnectedState extends BaseConnectionState {
     String? accessToken,
     String? apiHost,
     String? wsHost,
-    bool Function()? shouldProceed,
   }) async {
     sbLog.i(StackTrace.current, 'userId: $userId');
 
@@ -39,7 +38,6 @@ class DisconnectedState extends BaseConnectionState {
       accessToken: accessToken,
       apiHost: apiHost,
       wsHost: wsHost,
-      shouldProceed: shouldProceed,
     );
 
     await chat.eventDispatcher.onConnecting();

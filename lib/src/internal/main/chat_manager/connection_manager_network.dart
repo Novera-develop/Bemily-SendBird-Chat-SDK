@@ -6,16 +6,12 @@ extension _NetworkConnection on ConnectionManager {
   static const _initialConnectTrial = 1;
 
   Future<void> _handleConnectError(Object e,
-      NetworkReconnectAttempt? ownedAttempt, Object? socket,
+      Object? socket,
       Completer<User> login, String userId, String url,
       bool isDelayedConnecting) async {
-    bool isCurrent() => isCallbackCurrent(ownedAttempt, socket) &&
+    bool isCurrent() => isCallbackCurrent(socket) &&
         identical(login, chat.chatContext.loginCompleter);
-    if (!isCallbackCurrent(ownedAttempt, socket)) return;
-    if (ownedAttempt != null) {
-      _onOwnedReconnectError(ownedAttempt, socket, e);
-      return;
-    }
+    if (!isCallbackCurrent(socket)) return;
     if (!isCurrent()) return;
     sbLog.e(StackTrace.current, 'e: $e');
 
@@ -40,7 +36,7 @@ extension _NetworkConnection on ConnectionManager {
           //+ [DBManager]
           if (chat.dbManager.isEnabled()) {
             final user = await chat.dbManager.getLoginInfoByException(
-                userId, e, shouldProceed: isCurrent);
+                userId, e);
             if (!isCurrent()) return;
             if (user != null) {
               if (!login.isCompleted) login.complete(user);
@@ -98,7 +94,7 @@ extension _NetworkConnection on ConnectionManager {
           Duration(seconds: chat.chatContext.options.connectionTimeout),
           onTimeout: () async {
         if (!identical(login, chat.chatContext.loginCompleter) ||
-            !isCallbackCurrent(null, socket)) {
+            !isCallbackCurrent(socket)) {
           throw ConnectionCanceledException();
         }
         final e = LoginTimeoutException();
@@ -113,54 +109,45 @@ extension _NetworkConnection on ConnectionManager {
         await doDisconnect(clear: true);
         throw e;
       });
-  NetworkSocketAttempt? get _callbackSdkAttempt =>
-      Zone.current[ConnectionManager._sdkAttemptZone] as NetworkSocketAttempt?;
+  SocketAttempt? get _callbackSdkAttempt =>
+      Zone.current[ConnectionManager._sdkAttemptZone] as SocketAttempt?;
 
-  bool _isSocketStartCurrent(NetworkReconnectAttempt? key, Object? socket) {
+  bool _isSocketStartCurrent(Object? socket) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
-    return isCallbackCurrent(key, socket) &&
+    return isCallbackCurrent(socket) &&
         (reservation == null || identical(reservation, _sdkReservation));
   }
 
   void _cancelScheduledSdkReconnect(Object? socket) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
-    if (reservation is! NetworkSocketAttempt ||
+    if (reservation is! SocketAttempt ||
         !identical(reservation, _sdkReservation) ||
-        !identical(socket, _socketIdentity) || networkReconnect.ownsReconnect) return;
+        !identical(socket, _socketIdentity)) return;
     _sdkReservation = null;
     reconnectTimer?.cancel();
     reconnectTimer = null;
-    _scheduledReconnectAction = null;
-    _scheduledAttempt = null;
     changeState(_sdkAttempt?.isAuthenticated == true && webSocketClient.isConnected()
         ? ConnectedState(chat: chat) : DisconnectedState(chat: chat));
     reservation.closed(error: ConnectionCanceledException());
   }
 
-  void _connectSocket(NetworkReconnectAttempt? key, String url,
+  void _connectSocket(String url,
       {String? accessToken, String? sessionKey, bool reconnect = false}) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
     final previousAttempt = _sdkAttempt;
     webSocketClient.connect(url: url, accessToken: accessToken,
         sessionKey: sessionKey, reconnect: reconnect,
-        onTransportStart: (connect) => _startSocketTransport(key, connect));
+        onTransportStart: (connect) => _startSocketTransport(connect));
     if (identical(reservation, _sdkReservation)) _sdkReservation = null;
-    if (key == null && identical(previousAttempt, _sdkAttempt) &&
+    if (identical(previousAttempt, _sdkAttempt) &&
         previousAttempt?.isAuthenticated == true && webSocketClient.isConnected()) {
       changeState(ConnectedState(chat: chat));
     }
   }
 
-  void _startSocketTransport(NetworkReconnectAttempt? key, void Function() connect) {
+  void _startSocketTransport(void Function() connect) {
     _sdkReservation = null;
-    if (key != null) {
-      networkReconnect.started(key);
-      runZoned(connect, zoneValues: {ConnectionManager._sdkAttemptZone: null,
-        ConnectionManager._socketZone: _socketIdentity,
-        ConnectionManager._sdkReservationZone: null});
-      return;
-    }
-    final attempt = networkReconnect.createSdkAttempt();
+    final attempt = socketTracker.createSdkAttempt();
     _sdkAttempt = attempt;
     attempt.started();
     runZonedGuarded(connect, (error, stack) {
@@ -172,47 +159,24 @@ extension _NetworkConnection on ConnectionManager {
       ConnectionManager._sdkReservationZone: null});
   }
 
-  Timer _scheduleSocketReconnect(NetworkReconnectAttempt? key, Duration delay,
+  Timer _scheduleSocketReconnect(Duration delay,
       Future<void> Function() action) {
-    if (key != null) {
-      networkReconnect.scheduled(key, networkReconnect.now + delay);
-      return networkReconnect.schedule(key, delay, action);
-    }
-    final attempt = networkReconnect.reserveSdkAttempt(preserveConnection:
+    final attempt = socketTracker.reserveSdkAttempt(preserveConnection:
         _sdkAttempt?.isActive == true && webSocketClient.isConnected());
     _sdkReservation = attempt;
-    attempt.scheduled(networkReconnect.now + delay);
+    attempt.scheduled(socketTracker.now + delay);
     return Timer(delay, () => runZoned(action,
         zoneValues: {ConnectionManager._sdkAttemptZone: null,
           ConnectionManager._sdkReservationZone: attempt}));
   }
-  Future<void> _startOwnedReconnect(NetworkReconnectAttempt key) async {
-    if (!networkReconnect.isCurrent(key)) return;
-    webSocketClient = createWebSocketClient(key);
-    final started = await doReconnect(reset: true, ownedAttempt: key);
-    if (!started) networkReconnect.fail(key, ConnectionRequiredException());
-  }
-
-  void _startScheduledReconnectNow(NetworkReconnectAttempt key) {
-    final action = _scheduledReconnectAction;
-    if (_scheduledAttempt != key || action == null) return;
-    reconnectTimer?.cancel();
-    _scheduledReconnectAction = null;
-    _scheduledAttempt = null;
-    action();
-  }
-
-  WebSocketClient _createWebSocketClient(NetworkReconnectAttempt? key) {
+  WebSocketClient _createWebSocketClient() {
     final socket = Object();
     _socketIdentity = socket;
-    _socketInvalidated = false;
     _sdkAttempt = null;
     _sdkReservation = null;
     T dispatch<T>(T Function() action) => runZoned(action,
-        zoneValues: {ConnectionManager._attemptZone: key,
-          ConnectionManager._socketZone: callbackSocket ?? socket,
-          ConnectionManager._sdkAttemptZone: key == null
-              ? _callbackSdkAttempt ?? _sdkAttempt : null});
+        zoneValues: {ConnectionManager._socketZone: callbackSocket ?? socket,
+          ConnectionManager._sdkAttemptZone: _callbackSdkAttempt ?? _sdkAttempt});
     final factory = socketFactory;
     if (factory != null) {
       return factory(
@@ -224,7 +188,6 @@ extension _NetworkConnection on ConnectionManager {
     return WebSocketClient(
       chat: chat,
       chatContext: chat.chatContext,
-      managedReconnect: key != null,
       onWebSocketConnected: () => dispatch(_onWebSocketConnected),
       onWebSocketClosed: () => dispatch(_onWebSocketClosed),
       onWebSocketData: (data) => dispatch(() => _onWebSocketData(data)),
@@ -240,12 +203,8 @@ extension _NetworkConnection on ConnectionManager {
   }
 
   void _onWebSocketClosed() async {
-    final key = callbackAttempt;
-    if (!isCallbackCurrent(key, callbackSocket)) return;
-    if (key == null) _callbackSdkAttempt?.closed();
-    final recoverAuthenticated = key != null && networkReconnect.closed(key);
-    if (key != null && !recoverAuthenticated) return;
-    if (networkReconnect.ownsReconnect) return;
+    if (!isCallbackCurrent(callbackSocket)) return;
+    _callbackSdkAttempt?.closed();
     chat.commandManager.clearCompleterMap();
     chat.commandManager
         .cancelAckTimers(); // Cancel ack timers to prevent AckTimeoutException
@@ -264,13 +223,13 @@ extension _NetworkConnection on ConnectionManager {
     // Also handles the case where AckTimeout forced WS close while in ReconnectingState
     // (e.g., connectivity-triggered reconnect fired but connect() returned early because
     // WS appeared still connected, then AckTimeout detected the dead WS and closed it).
-    if ((recoverAuthenticated || isConnected() || isReconnecting()) &&
+    if ((isConnected() || isReconnecting()) &&
         !webSocketClient.isConnected()) {
       if (_reconnectIfNeededTimer != null) {
         _reconnectIfNeededTimer!.cancel();
       }
       _reconnectIfNeededTimer = Timer(_recoveryDelay, () async {
-        if ((recoverAuthenticated || isConnected() || isReconnecting()) &&
+        if ((isConnected() || isReconnecting()) &&
             !webSocketClient.isConnected()) {
           sbLog.d(StackTrace.current, '_reconnectIfNeeded()');
           await _reconnectIfNeeded();
@@ -280,9 +239,8 @@ extension _NetworkConnection on ConnectionManager {
   }
 
   Future<void> _onWebSocketData(dynamic data) async {
-    final key = callbackAttempt;
     final socket = callbackSocket;
-    if (!isCallbackCurrent(key, socket)) return;
+    if (!isCallbackCurrent(socket)) return;
     if (data == null) return;
 
     String commandString;
@@ -300,13 +258,7 @@ extension _NetworkConnection on ConnectionManager {
     runZonedGuarded(() async {
       try {
         for (final command in commands) {
-          if (!isCallbackCurrent(key, socket)) return;
-          if (key != null && networkReconnect.isAuthenticating(key) &&
-              (command.isError || command.hasError || command.isBusy)) {
-            networkReconnect.fail(key, SendbirdException(
-                code: command.errorCode, message: command.errorMessage));
-            return;
-          }
+          if (!isCallbackCurrent(socket)) return;
           await chat.commandManager.processCommand(command);
         }
       } catch (e) {
@@ -314,15 +266,7 @@ extension _NetworkConnection on ConnectionManager {
         rethrow;
       }
     }, (e, s) {
-      if (!isCallbackCurrent(key, socket)) return;
-      if (key != null) {
-        if (networkReconnect.isAuthenticating(key)) {
-          networkReconnect.fail(key, e);
-        } else {
-          _onWebSocketError(e);
-        }
-        return;
-      }
+      if (!isCallbackCurrent(socket)) return;
       _callbackSdkAttempt?.closed(error: e);
       if (chat.chatContext.loginCompleter != null &&
           !chat.chatContext.loginCompleter!.isCompleted) {
@@ -332,12 +276,8 @@ extension _NetworkConnection on ConnectionManager {
   }
 
   Future<void> _onWebSocketError(Object e) async {
-    final key = callbackAttempt;
-    if (!isCallbackCurrent(key, callbackSocket)) return;
-    if (key == null) _callbackSdkAttempt?.closed(error: e);
-    if (key != null) {
-      if (!networkReconnect.closed(key, error: e)) return;
-    }
+    if (!isCallbackCurrent(callbackSocket)) return;
+    _callbackSdkAttempt?.closed(error: e);
     // Immediately fail pending ACK completers so messages go to auto-resend
     // without waiting for the full ACK timeout (webSocketTimeout = 30s).
     // This is especially important on iOS where the watchdog detects a dead
@@ -348,24 +288,7 @@ extension _NetworkConnection on ConnectionManager {
     await _reconnectIfNeeded();
   }
 
-  void _onOwnedReconnectError(
-      NetworkReconnectAttempt key, Object? socket, Object error) {
-    if (networkReconnect.isAuthenticating(key)) {
-      networkReconnect.fail(key, error);
-      return;
-    }
-    runZoned(() => _onWebSocketError(error), zoneValues: {
-      ConnectionManager._attemptZone: key,
-      ConnectionManager._socketZone: socket,
-    });
-  }
-
   Future<void> _reconnectIfNeeded() async {
-    if (networkReconnect.ownsReconnect) {
-      await networkReconnect.currentFuture?.then<void>((_) {},
-          onError: (Object _, StackTrace __) {});
-      return;
-    }
     final socket = _socketIdentity;
     sbLog.d(StackTrace.current);
     if (chat.chatContext.currentUser != null) {
@@ -387,8 +310,6 @@ extension _NetworkConnection on ConnectionManager {
     reconnectTimer = null;
     _reconnectIfNeededTimer?.cancel();
     _reconnectIfNeededTimer = null;
-    _scheduledReconnectAction = null;
-    _scheduledAttempt = null;
   }
 
 }

@@ -210,17 +210,17 @@ void main() {
         _credentialCheckpoint, (f) {
       f.cache(A.room);
       f.frame([read(A.many)]);
-      var checks = A.zero;
       final errors = <Object>[];
-      f.chat.connectionManager.connect(_newUser,
-          shouldProceed: () => checks++ == A.zero).then<void>((_) {},
+      f.chat.connectionManager.connect(_newUser).then<void>((_) {},
           onError: (Object error) => errors.add(error));
       f.clock.flushMicrotasks();
-      expect(errors.single, isA<ConnectionCanceledException>());
       expect(f.trace.count(K.socketClose), A.one);
       expect(f.cacheState(A.room), A.cacheAbsent);
       expect(_restore(f).getCachedReadStatus(A.room)[A.peer], A.many);
       expect(f.trace.count(K.txnEnter), A.one);
+      f.chat.connectionManager.doDisconnect(clear: true);
+      f.clock.flushMicrotasks();
+      expect(errors.single, isA<ConnectionCanceledException>());
       f.elapse(_checkpointWindow);
       expect(f.trace.count(K.txnEnter), A.one);
       f.settle();

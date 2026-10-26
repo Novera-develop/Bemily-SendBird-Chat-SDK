@@ -14,7 +14,6 @@ abstract class BaseConnectionState {
     String? accessToken,
     String? apiHost,
     String? wsHost,
-    bool Function()? shouldProceed,
   });
   Future<void> disconnect({required bool logout});
   Future<bool> reconnect({required bool reset});

@@ -53,7 +53,7 @@ class CommandManager {
   // Forces WS close if no ACK comes back within _deadWsDetectionSeconds,
   // which is shorter than webSocketTimeout to reduce reconnect delay.
   final Map<String, Timer> _deadWsTimerMap = {};
-  static const int _deadWsDetectionSeconds = 3;
+  static const int _deadWsDetectionSeconds = 5;
   final Map<String, int> _readMap = {};
   final Map<String, Completer<int?>> messageOffsetTsCompleterMap = {};
   final Map<String, int> _dedupIdMap = {};
@@ -379,10 +379,9 @@ class CommandManager {
     required Map<String, dynamic> loginPayload,
   }) async {
     final connection = _chat.connectionManager;
-    final attempt = fromWebSocket ? connection.callbackAttempt : null;
     final socket = fromWebSocket ? connection.callbackSocket : null;
     bool isCurrent() => !fromWebSocket ||
-        connection.isCallbackCurrent(attempt, socket);
+        connection.isCallbackCurrent(socket);
     if (!isCurrent()) return;
     final event = LoginEvent.fromJson(loginPayload);
     event.user.set(_chat);
@@ -414,9 +413,6 @@ class CommandManager {
       ..lastConnectedAt = event.loginTimestamp
       ..reconnectConfig = event.reconnectConfiguration;
 
-    if (attempt != null) {
-      connection.networkReconnect.receivedSessionKey(attempt, event.sessionKey);
-    }
     _chat.sessionManager.setSessionKey(event.sessionKey);
 
     //+ [DBManager]
@@ -471,8 +467,7 @@ class CommandManager {
       } else {
         _chat.eventManager.notifyConnected(event.user.userId);
       }
-      if (attempt != null) connection.networkReconnect.authenticated(attempt);
-      if (attempt == null) connection.authenticatedSocket();
+      connection.authenticatedSocket();
     } else {
       await _chat.eventDispatcher.onLogin(event);
     }
