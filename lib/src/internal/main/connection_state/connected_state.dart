@@ -23,6 +23,7 @@ class ConnectedState extends BaseConnectionState {
     sbLog.i(StackTrace.current, 'userId: $userId');
     if (chat.connectionManager.matchesSessionCredentials(userId,
             accessToken: accessToken, apiHost: apiHost, wsHost: wsHost) &&
+        chat.connectionManager.hasAuthenticatedTransport &&
         chat.chatContext.currentUser != null &&
         chat.chatContext.services.contains(Service.chat)) {
       return chat.chatContext.currentUser!;

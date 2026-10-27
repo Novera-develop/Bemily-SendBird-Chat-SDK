@@ -12,6 +12,9 @@ class SendbirdChatOptions {
   static const defaultTypingIndicatorThrottle = 1000;
   static const defaultUseMemberInfoInMessage = true;
   static const defaultUseAutoResend = false;
+  static const defaultReconnectAttemptDeadline = Duration(seconds: 20);
+
+  Duration reconnectAttemptDeadline;
 
   bool _useCollectionCaching = defaultUseCollectionCaching;
   int _connectionTimeout = defaultConnectionTimeout;
@@ -22,6 +25,7 @@ class SendbirdChatOptions {
   bool _useAutoResend = defaultUseAutoResend;
 
   SendbirdChatOptions({
+    this.reconnectAttemptDeadline = defaultReconnectAttemptDeadline,
     bool? useCollectionCaching = defaultUseCollectionCaching,
     int? connectionTimeout = defaultConnectionTimeout,
     int? webSocketTimeout = defaultWebSocketTimeout,

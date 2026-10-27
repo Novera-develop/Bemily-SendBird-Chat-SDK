@@ -39,6 +39,7 @@ class DisconnectedState extends BaseConnectionState {
       apiHost: apiHost,
       wsHost: wsHost,
     );
+    result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
 
     await chat.eventDispatcher.onConnecting();
     return result;
@@ -68,7 +69,7 @@ class DisconnectedState extends BaseConnectionState {
     sbLog.i(StackTrace.current);
 
     if (timeForDelayedConnectingState != null) {
-      final currentTime = DateTime.now().millisecondsSinceEpoch;
+      final currentTime = chat.connectionManager.now.millisecondsSinceEpoch;
       final elapsedMs = currentTime - timeForDelayedConnectingState!;
       if (elapsedMs >= 0 &&
           elapsedMs < retryAfterForDelayedConnectingState! * 1000) {

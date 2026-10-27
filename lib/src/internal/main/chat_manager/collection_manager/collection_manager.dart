@@ -46,8 +46,22 @@ class CollectionManager {
   final Set<Future<void>> _readCheckpointWrites = {};
   Object _readCheckpointGeneration = Object();
   bool _acceptReadCheckpoints = true;
+  bool _readCheckpointsDisposed = false;
+  Object? _readCheckpointSession;
 
   void _queueReadCheckpoint(GroupChannel channel) {
+    if (_readCheckpointsDisposed) return;
+    final session = _chat.connectionManager.authenticatedSessionIdentity;
+    if (!identical(session, _readCheckpointSession)) {
+      _readCheckpointSession = session;
+      if (!_acceptReadCheckpoints) {
+        _readCheckpointGeneration = Object();
+        for (final channelUrl in _pendingReadCheckpoints.keys.toList()) {
+          _cancelReadCheckpoint(channelUrl);
+        }
+        _acceptReadCheckpoints = true;
+      }
+    }
     if (!_acceptReadCheckpoints) return;
     final channelUrl = channel.channelUrl;
     _pendingReadCheckpoints[channelUrl] = channel;
@@ -82,14 +96,21 @@ class CollectionManager {
 
   Future<void> resetReadCheckpoints({bool dispose = false}) async {
     _acceptReadCheckpoints = false;
+    _readCheckpointsDisposed = dispose;
+    if (!dispose) {
+      _readCheckpointSession = _chat.connectionManager.authenticatedSessionIdentity;
+    }
+    final generation = _readCheckpointGeneration;
     try {
       await _flushReadCheckpoints();
     } finally {
-      _readCheckpointGeneration = Object();
-      for (final channelUrl in _pendingReadCheckpoints.keys.toList()) {
-        _cancelReadCheckpoint(channelUrl);
+      if (identical(generation, _readCheckpointGeneration)) {
+        _readCheckpointGeneration = Object();
+        for (final channelUrl in _pendingReadCheckpoints.keys.toList()) {
+          _cancelReadCheckpoint(channelUrl);
+        }
+        _acceptReadCheckpoints = !dispose;
       }
-      _acceptReadCheckpoints = !dispose;
     }
   }
 

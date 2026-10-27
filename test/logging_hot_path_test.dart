@@ -98,6 +98,29 @@ void main() {
     expect(trace.parses, _one);
   });
 
+  for (final level in [LogLevel.error, LogLevel.none]) {
+    testWidgets('NF9 outgoing payload stringification suppressed at $level', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await SharedPreferences.getInstance();
+      await SendbirdChat().init(appId: _channelUrl,
+        options: SendbirdChatOptions(useCollectionCaching: false));
+      final chat = SendbirdChat().chat;
+      chat.chatContext.currentUserId = _userId;
+      chat.chatContext.currentUser = User(userId: _userId, nickname: _userId);
+      final socket = _Socket();
+      chat.connectionManager.webSocketClient = socket;
+      sbLog.setLogLevel(level);
+      final probe = _EncodeProbe();
+      final outgoing = Command(cmd: CommandString.mack)
+        ..payload = {_probeKey: probe};
+      await chat.commandManager.sendCommand(outgoing);
+      expect(socket.sent, hasLength(_one));
+      expect(probe.encodes, _one);
+      expect(probe.stringifications, _zero);
+      chat.commandManager.cleanUp();
+    });
+  }
+
   for (final level in [Level.error, Level.verbose]) {
     testWidgets('MESG MACK READ preserve processing with $level logging',
         (tester) async {
@@ -153,7 +176,9 @@ void main() {
       await chat.commandManager.processCommand(mack);
       encodeCounts.add(probe.encodes);
       probe.encodes = _zero;
-      final outgoing = Command(cmd: CommandString.read, requestId: _requestId);
+      final outgoingProbe = _EncodeProbe();
+      final outgoing = Command(cmd: CommandString.read, requestId: _requestId)
+        ..payload = {_probeKey: outgoingProbe};
       var completed = false;
       final pending = chat.commandManager.sendCommand(outgoing).then((value) {
         completed = true;
@@ -171,6 +196,8 @@ void main() {
         };
       await chat.commandManager.processCommand(read);
       expect(await pending, same(read));
+      expect(outgoingProbe.encodes, _one);
+      expect(outgoingProbe.stringifications, level == Level.error ? _zero : _one);
       expect(completed, isTrue);
       expect(channel.myLastRead, _timestamp);
       expect(channel.getCachedReadStatus(_channelUrl)[_userId], _timestamp);
@@ -198,6 +225,13 @@ class _CountingTrace implements StackTrace {
 
 class _EncodeProbe {
   int encodes = _zero;
+  int stringifications = _zero;
+
+  @override
+  String toString() {
+    stringifications++;
+    return _probeValue;
+  }
 
   String toJson() {
     encodes++;

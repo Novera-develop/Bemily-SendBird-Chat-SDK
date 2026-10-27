@@ -11,6 +11,8 @@ import 'package:universal_io/io.dart';
 
 /// Represents a file message params.
 class FileMessageCreateParams extends BaseMessageCreateParams {
+  String? requestId;
+
   /// The file info.
   late FileInfo fileInfo;
 

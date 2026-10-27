@@ -74,7 +74,8 @@ class _Fixture {
   late final _DeviceTokens deviceTokens;
   late final StreamSubscription<SocketEvent> subscription;
 
-  _Fixture({Duration Function()? clock, Chat? chat, bool useTransport = false,
+  _Fixture({Duration Function()? clock, DateTime Function()? wallClock,
+      Chat? chat, bool useTransport = false,
       bool useLocalServer = false, bool useCache = false,
       void Function()? onLoginInfo})
       : chat = chat ?? Chat(appId: _appId,
@@ -92,7 +93,7 @@ class _Fixture {
     chat.sessionManager = sessions = _Sessions();
     dispatcher = _Dispatcher(chat);
     chat.eventDispatcher = dispatcher;
-    connection = _Connection(chat: chat, reconnectClock: clock,
+    connection = _Connection(chat: chat, reconnectClock: clock, wallClock: wallClock,
         onLoginInfo: onLoginInfo,
         socketFactory: (data, closed, error) {
       if (useTransport || useLocalServer) {
@@ -192,6 +193,9 @@ class _Socket implements WebSocketClient {
   String? loginAccessToken;
   String? loginSessionKey;
   bool connected = false;
+  final writes = <String>[];
+  @override
+  void send(String data) { writes.add(data); }
   Completer<bool>? closeBarrier;
   _Socket(this._data, this._closed, this._error);
   void failConnect(Object error) =>
@@ -322,11 +326,20 @@ class _Handler extends ConnectionHandler {
 
 class _CachedDB implements DBManager {
   final users = <User>[];
+  Completer<void>? saveBarrier;
+  Completer<void>? returnBarrier;
+  void Function()? beforeSave;
+  void Function()? afterSave;
   @override
   bool isEnabled() => true;
   @override
-  Future<void> setLoginInfo(ChatContext context, User user) async {
+  Future<void> setLoginInfo(ChatContext context, User user,
+      {bool Function()? shouldPersist}) async {
+    beforeSave?.call();
+    if (saveBarrier != null) await saveBarrier!.future;
     users.add(user);
+    afterSave?.call();
+    if (returnBarrier != null) await returnBarrier!.future;
   }
   @override
   Future<void> clear() async {}
@@ -343,6 +356,7 @@ class _Connection extends ConnectionManager {
   }
   final void Function()? onLoginInfo;
   _Connection({required super.chat, super.reconnectClock, super.socketFactory,
+      super.wallClock,
       this.onLoginInfo});
 
   @override

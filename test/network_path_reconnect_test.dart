@@ -2,6 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:isar_community/isar.dart';
+import 'package:sendbird_chat_sdk/src/internal/db/schema/channel/c_group_channel.dart';
+import 'package:sendbird_chat_sdk/src/internal/db/schema/message/c_user_message.dart';
+import 'package:sendbird_chat_sdk/src/internal/db/schema/user/c_user.dart';
+import 'package:sendbird_chat_sdk/src/internal/db/schema/login/c_login.dart';
+
+import 'package:fake_async/fake_async.dart';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart' hide EventDispatcher;
@@ -11,33 +19,50 @@ import 'package:sendbird_chat_sdk/src/internal/db/schema/login/login.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat/chat.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_context/chat_context.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/connection_manager.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/collection_manager/collection_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/network_reconnect_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/db_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/device_token_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/event_dispatcher.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/event_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/chat_manager/session_manager.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/connection_state/connected_state.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/connection_state/connecting_state.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/connection_state/disconnected_state.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/connection_state/delayed_connecting_state.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/connection_state/reconnecting_state.dart';
 import 'package:sendbird_chat_sdk/src/internal/main/stats/stat_manager.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/utils/async/async_task.dart';
+import 'package:sendbird_chat_sdk/src/internal/main/utils/async/async_queue.dart';
 import 'package:sendbird_chat_sdk/src/internal/network/websocket/event/login_event.dart';
+import 'package:sendbird_chat_sdk/src/internal/network/http/api_client.dart';
+import 'package:sendbird_chat_sdk/src/internal/network/http/http_client/request/api_request.dart';
 import 'package:sendbird_chat_sdk/src/internal/network/websocket/command/command.dart';
 import 'package:sendbird_chat_sdk/src/internal/network/websocket/command/command_type.dart';
 import 'package:sendbird_chat_sdk/src/internal/network/websocket/websocket_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'audit/sdk_audit_fixture.dart' as audit;
 
 part 'support/network_reconnect_fixture.dart';
 part 'network_path_reconnect_lifecycle_cases.dart';
 part 'network_path_credentials_cases.dart';
 part 'network_path_session_ownership_cases.dart';
+part 'network_path_session_matrix_cases.dart';
 part 'network_path_background_recovery_cases.dart';
 
 enum _CancellationPhase { scheduled, dispatcher, session, delayedParameters }
 
 void main() {
+  _registerNf7Tests();
+  _registerNf6Tests();
+  _registerNf5Tests();
+  _registerNf4RaceTests();
+  _registerNf3RaceTests();
+  _registerNf2RaceTests();
+  _registerTransportRecoveryTests();
   _registerBackgroundRecoveryTests();
   _registerSessionOwnershipTests();
   setUp(() async {
@@ -127,8 +152,8 @@ void main() {
       expect(fixture.adapter.connectionSnapshot.sequence, reserved.sequence);
       expect(fixture.adapter.connectionSnapshot.authenticated, isFalse);
       expect(fixture.adapter.connectionSnapshot.reconnecting, isFalse);
-      expect(fixture.events.last.kind, SocketEventKind.authenticationFailed);
-      expect(fixture.events.last.error, isA<ConnectionCanceledException>());
+      expect(fixture.events.last.kind, SocketEventKind.websocketClosed);
+      expect(fixture.events.last.error, isNull);
       expect(fixture.connection.reconnectTimer, isNull);
       fixture.dispose();
       await _flush(tester);

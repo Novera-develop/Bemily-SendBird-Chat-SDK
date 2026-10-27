@@ -26,6 +26,8 @@ const _reservedRoom = 'reserved-room';
 const _reservedText = 'reserved-text';
 
 void main() {
+  _registerReservedFileTests();
+  _registerSendStageTests();
   testWidgets('W20 reserved request survives synchronous send failure', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await SharedPreferences.getInstance();
@@ -176,9 +178,10 @@ class _Fixture {
   final timers = <Timer>[];
   final _Socket socket;
   late final CommandManager manager;
+  late final ChatContext context;
 
   _Fixture({bool connected = true}) : socket = _Socket(connected: connected) {
-    final context = ChatContext.test()
+    context = ChatContext.test()
       ..currentUser = User(userId: _userId, nickname: _userId);
     manager = CommandManager(chat: _Chat(context, _Connection(socket)));
   }
@@ -217,6 +220,9 @@ class _Connection implements ConnectionManager {
   _Connection(this.webSocketClient);
 
   @override
+  bool isConnected() => webSocketClient.isConnected();
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -250,4 +256,244 @@ class _Socket implements WebSocketClient {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+const _observerFirst = 'first';
+const _observerSecond = 'second';
+const _observerLate = 'late';
+const _observerFailure = 'observer failure';
+const _ackSeconds = 5;
+const _fileUrl = 'https://localhost/uploaded-file';
+const _invalidPayloadField = 'invalid';
+
+void _registerSendStageTests() {
+  for (final missingUser in [false, true]) {
+    testWidgets('N3 beforeWrite guard missingUser=$missingUser', (tester) async {
+      final fixture = _Fixture(connected: missingUser);
+      if (missingUser) fixture.context.currentUser = null;
+      await expectLater(fixture.send(), throwsA(isA<SendbirdException>().having(
+          (e) => e.sendStage, 'stage', SendStage.beforeWrite)));
+      expect(fixture.socket.sendCalls, _zeroCalls);
+    });
+  }
+
+  testWidgets('N3 send failure is afterWrite and keeps exception identity', (tester) async {
+    final fixture = _Fixture();
+    final error = WebSocketFailedException();
+    fixture.socket.sendError = error;
+    await expectLater(fixture.send(), throwsA(same(error)));
+    expect(error.sendStage, SendStage.afterWrite);
+    expect(fixture.timers, isEmpty);
+  });
+
+  testWidgets('N3 websocket precheck stage survives command propagation', (tester) async {
+    final fixture = _Fixture();
+    fixture.socket.sendError = WebSocketFailedException(sendStage: SendStage.beforeWrite);
+    await expectLater(fixture.send(), throwsA(isA<SendbirdException>().having(
+        (e) => e.sendStage, 'stage', SendStage.beforeWrite)));
+  });
+
+  testWidgets('N3 ACK timeout preserves afterWrite', (tester) async {
+    final fixture = _Fixture();
+    fixture.context.options.webSocketTimeout = _ackSeconds;
+    final pending = expectLater(fixture.send(), throwsA(isA<AckTimeoutException>().having(
+        (e) => e.sendStage, 'stage', SendStage.afterWrite)));
+    await tester.pump(const Duration(seconds: _ackSeconds));
+    await pending;
+  });
+
+  testWidgets('N3 close preserves afterWrite', (tester) async {
+    final fixture = _Fixture();
+    final pending = expectLater(fixture.send(), throwsA(isA<SendbirdException>().having(
+        (e) => e.sendStage, 'stage', SendStage.afterWrite)));
+    fixture.manager.clearCompleterMap();
+    fixture.manager.cancelAckTimers();
+    await pending;
+  });
+
+  testWidgets('N3 observers run synchronously after write and isolate failures', (tester) async {
+    final fixture = _Fixture();
+    final seen = <String>[];
+    fixture.manager.addDispatchObserver(_observerFirst, (requestId, stage) {
+      expectSync(fixture.socket.sendCalls, _oneCall);
+      expectSync(requestId, _requestId);
+      expectSync(stage, SendStage.afterWrite);
+      seen.add(_observerFirst);
+      throw StateError(_observerFailure);
+    });
+    fixture.manager.addDispatchObserver(_observerSecond, (requestId, stage) {
+      seen.add(_observerSecond);
+    });
+    final sent = fixture.send();
+    expect(seen, [_observerFirst, _observerSecond]);
+    fixture.manager.addDispatchObserver(_observerLate, (_, __) => seen.add(_observerLate));
+    await fixture.manager.processCommand(fixture.command());
+    await sent;
+    expect(seen, [_observerFirst, _observerSecond]);
+    fixture.manager.removeDispatchObserver(_observerFirst);
+    fixture.manager.removeDispatchObserver(_observerSecond);
+    fixture.manager.removeDispatchObserver(_observerLate);
+    final next = fixture.send();
+    await fixture.manager.processCommand(fixture.command());
+    await next;
+    expect(seen, [_observerFirst, _observerSecond]);
+  });
+
+  testWidgets('N3 observer close cannot miss ACK waiter', (tester) async {
+    final fixture = _Fixture();
+    fixture.manager.addDispatchObserver(_observerFirst, (_, __) {
+      fixture.manager.clearCompleterMap();
+    });
+    await expectLater(fixture.send(), throwsA(isA<SendbirdException>().having(
+        (e) => e.sendStage, 'stage', SendStage.afterWrite)));
+    expect(fixture.timers, isEmpty);
+  });
+
+  testWidgets('N3 encoding failure occurs before write', (tester) async {
+    final fixture = _Fixture();
+    final command = fixture.command();
+    command.payload = {_invalidPayloadField: Object()};
+    await expectLater(fixture.manager.sendCommand(command),
+        throwsA(isA<SendbirdException>().having(
+            (e) => e.sendStage, 'stage', SendStage.beforeWrite)));
+    expect(fixture.socket.sendCalls, _zeroCalls);
+  });
+
+  for (final file in [false, true]) {
+  for (final afterWrite in [false, true]) {
+    testWidgets('N3 message handler keeps stage file=$file afterWrite=$afterWrite', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await SharedPreferences.getInstance();
+      final sdk = SendbirdChat();
+      await sdk.init(appId: _reservedRoom,
+          options: SendbirdChatOptions(useCollectionCaching: false));
+      final chat = sdk.chat;
+      final socket = _Socket(connected: afterWrite);
+      chat.connectionManager = _Connection(socket);
+      chat.chatContext.currentUser = afterWrite ? User(userId: _userId, nickname: _userId) : null;
+      if (afterWrite) socket.sendError = WebSocketFailedException();
+      final channel = OpenChannel(channelUrl: _reservedRoom,
+          participantCount: _zeroCalls, operators: [])..set(chat);
+      SendbirdException? received;
+      if (file) {
+        channel.sendFileMessage(FileMessageCreateParams.withFileUrl(_fileUrl),
+            handler: (_, error) => received = error);
+      } else {
+        channel.sendUserMessage(UserMessageCreateParams(message: _reservedText),
+            handler: (_, error) => received = error);
+      }
+      await tester.pump(Duration.zero);
+      await tester.pump(Duration.zero);
+      expect(received?.sendStage, afterWrite ? SendStage.afterWrite : SendStage.beforeWrite);
+    });
+  }
+}
+}
+
+const _emptyRequestId = '';
+const _messageIdField = 'msg_id';
+const _channelTypeField = 'channel_type';
+const _uuidPattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
+
+void _registerReservedFileTests() {
+  for (final reserved in [false, true]) {
+    for (final resend in [false, true]) {
+      testWidgets('NF8-B file reservation ACK reserved=$reserved resend=$resend', (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        await SharedPreferences.getInstance();
+        final sdk = SendbirdChat();
+        await sdk.init(appId: _reservedRoom,
+            options: SendbirdChatOptions(useCollectionCaching: false));
+        final chat = sdk.chat;
+        final socket = _Socket(connected: true);
+        chat.connectionManager = _Connection(socket);
+        chat.chatContext.currentUser = User(userId: _userId, nickname: _userId);
+        final channel = OpenChannel(channelUrl: _reservedRoom,
+            participantCount: _zeroCalls, operators: [])..set(chat);
+        chat.channelCache.insert(channelKey: _reservedRoom, data: channel);
+        final observed = <String>[];
+        final received = <FileMessage>[];
+        final errors = <SendbirdException?>[];
+        sdk.addDispatchObserver(_observerFirst, (id, stage) {
+          observed.add(id);
+          expectSync(stage, SendStage.afterWrite);
+        });
+        addTearDown(() => sdk.removeDispatchObserver(_observerFirst));
+        final params = FileMessageCreateParams.withFileUrl(_fileUrl);
+        FileMessage? failed;
+        if (resend) {
+          socket.sendError = WebSocketFailedException();
+          params.requestId = _requestId;
+          channel.sendFileMessage(params, handler: (message, error) => failed = message);
+          await tester.pump(Duration.zero);
+        await tester.pump(Duration.zero);
+          expect(failed?.requestId, _requestId);
+          expect(failed?.sendingStatus, SendingStatus.failed);
+          expect(params.requestId, isNull);
+          expect(FileMessageCreateParams.withMessage(failed!).requestId, isNull);
+          socket.sendError = null;
+          observed.clear();
+        }
+        params.requestId = reserved ? _secondRequestId : null;
+        void handler(FileMessage message, SendbirdException? error) {
+          received.add(message);
+          errors.add(error);
+        }
+        final pending = resend
+            ? channel.resendFileMessage(failed!, handler: handler)
+            : channel.sendFileMessage(params, handler: handler);
+        expect(params.requestId, isNull);
+        if (reserved) {
+          expect(pending.requestId, _secondRequestId);
+        } else {
+          expect(pending.requestId, matches(_uuidPattern));
+        }
+        await tester.pump(Duration.zero);
+        await tester.pump(Duration.zero);
+        expect(observed, [pending.requestId]);
+        expect(received, isEmpty);
+        final ack = Command.buildFileMessage(channelUrl: _reservedRoom,
+            params: params, requestId: pending.requestId);
+        ack.payload[_messageIdField] = _oneCall;
+        ack.payload[_channelTypeField] = ChannelType.open.name;
+        await chat.commandManager.processCommand(ack);
+        await tester.pump(Duration.zero);
+        await tester.pump(Duration.zero);
+        expect(received.map((message) => message.requestId), [pending.requestId]);
+        expect(errors, [null]);
+        final repeated = channel.sendFileMessage(params, handler: handler);
+        expect(repeated.requestId, matches(_uuidPattern));
+        expect(repeated.requestId, isNot(pending.requestId));
+        await tester.pump(Duration.zero);
+        await tester.pump(Duration.zero);
+        expect(observed, [pending.requestId, repeated.requestId]);
+        final repeatedAck = Command.buildFileMessage(channelUrl: _reservedRoom,
+            params: params, requestId: repeated.requestId);
+        repeatedAck.payload[_messageIdField] = _twoTimers;
+        repeatedAck.payload[_channelTypeField] = ChannelType.open.name;
+        await chat.commandManager.processCommand(repeatedAck);
+        await tester.pump(Duration.zero);
+        expect(received.map((message) => message.requestId),
+            [pending.requestId, repeated.requestId]);
+        expect(errors, [null, null]);
+        await tester.pump(_afterTimeout);
+        expect(socket.closeCalls, _zeroCalls);
+      });
+    }
+  }
+  testWidgets('NF8-B file reservation validates and consumes once', (tester) async {
+    final channel = OpenChannel(channelUrl: _reservedRoom,
+        participantCount: _zeroCalls, operators: []);
+    final params = FileMessageCreateParams.withFileUrl(_fileUrl)
+      ..requestId = _emptyRequestId;
+    expect(() => FileMessage.fromParams(params: params, channel: channel),
+        throwsA(isA<InvalidParameterException>()));
+    params.requestId = _requestId;
+    final first = FileMessage.fromParams(params: params, channel: channel);
+    final second = FileMessage.fromParams(params: params, channel: channel);
+    expect(first.requestId, _requestId);
+    expect(second.requestId, matches(_uuidPattern));
+    expect(second.requestId, isNot(first.requestId));
+    expect(params.requestId, isNull);
+  });
 }

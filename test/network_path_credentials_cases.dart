@@ -28,6 +28,16 @@ void registerNetworkCredentialsTests() {
         final fixture = _Fixture();
         fixture.chat.chatContext.accessToken = _firstAccessToken;
         final pending = _setCredentialPhase(fixture, phase);
+        if (phase == _connectedPhase) {
+          await fixture.connection.doReconnect(reset: true);
+          await _flush(tester);
+          await fixture.sockets.last.login();
+          await _flush(tester);
+          expect(fixture.connection.webSocketClient.isConnected(), isTrue);
+          expect(fixture.connection.connectionSnapshot.authenticated, isTrue);
+        }
+        final starts = fixture.starts;
+        final closes = fixture.sockets.last.closes;
         final current = fixture.chat.chatContext.currentUser!;
         var completed = false;
         final joined = fixture.chat.connect(_userId,
@@ -37,8 +47,8 @@ void registerNetworkCredentialsTests() {
         });
         await _flush(tester);
         expect(completed, phase == _connectedPhase);
-        expect(fixture.starts, _none);
-        expect(fixture.sockets.single.closes, _none);
+        expect(fixture.starts, starts);
+        expect(fixture.sockets.last.closes, closes);
         expect(fixture.chat.chatContext.accessToken, _firstAccessToken);
         pending?.complete(current);
         await _flush(tester);

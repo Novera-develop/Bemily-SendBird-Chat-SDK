@@ -77,11 +77,13 @@ class CUser {
       ..requireAuth = cUser.requireAuth;
   }
 
-  static Future<CUser> upsert(Chat chat, Isar isar, User user) async {
+  static Future<CUser> upsert(Chat chat, Isar isar, User user,
+      {bool Function()? shouldPersist}) async {
     final cUser = CUser.fromUser(user);
 
     // User
     await chat.dbManager.write(() async {
+      if (shouldPersist?.call() == false) return;
       await isar.cUsers.put(cUser);
     });
 

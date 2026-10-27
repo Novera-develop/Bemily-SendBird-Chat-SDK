@@ -62,12 +62,15 @@ class DB {
     });
   }
 
-  Future<void> clear() async {
+  Future<void> clear({bool Function()? shouldPersist}) async {
+    if (shouldPersist?.call() == false) return;
     _groupChannelWriteGeneration = Object();
     _groupChannelWrites.clear();
     _groupChannelSignatures.clear();
     await _enqueuePersistence(() async {
+      if (shouldPersist?.call() == false) return;
       await _isar.writeTxn(() async {
+        if (shouldPersist?.call() == false) return;
         await _isar.clear();
       });
     });
@@ -87,8 +90,9 @@ class DB {
   }
 
   // Login
-  Future<void> upsertLogin(Login login) async {
-    await CLogin.upsert(_chat, _isar, login);
+  Future<void> upsertLogin(Login login, {bool Function()? shouldPersist}) async {
+    if (shouldPersist?.call() == false) return;
+    await CLogin.upsert(_chat, _isar, login, shouldPersist: shouldPersist);
   }
 
   Future<Login?> getLogin(String userId) async {
@@ -629,8 +633,9 @@ class DB {
   }
 
   // User
-  Future<void> upsertUser(User user) async {
-    await CUser.upsert(_chat, _isar, user);
+  Future<void> upsertUser(User user, {bool Function()? shouldPersist}) async {
+    if (shouldPersist?.call() == false) return;
+    await CUser.upsert(_chat, _isar, user, shouldPersist: shouldPersist);
   }
 
   Future<User?> getUser(String userId) async {

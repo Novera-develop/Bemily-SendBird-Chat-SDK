@@ -2,18 +2,24 @@
 
 import 'package:sendbird_chat_sdk/src/public/main/define/sendbird_error.dart';
 
+enum SendStage { beforeWrite, afterWrite, unknown }
+
+typedef DispatchObserver = void Function(String requestId, SendStage stage);
+
 /// SendbirdException
 class SendbirdException implements Exception {
   String? name;
   int? code;
   String? message;
   Map<String, dynamic>? data;
+  SendStage? sendStage;
 
   SendbirdException({
     this.name,
     this.code,
     this.message,
     this.data,
+    this.sendStage,
   });
 
   @override
@@ -35,16 +41,18 @@ class LoginTimeoutException extends SendbirdException {
 
 /// AckTimeoutException
 class AckTimeoutException extends SendbirdException {
-  AckTimeoutException()
+  AckTimeoutException({SendStage? sendStage = SendStage.afterWrite})
       : super(
+            sendStage: sendStage,
             name: (AckTimeoutException).toString(),
             code: SendbirdError.ackTimeout);
 }
 
 /// ConnectionRequiredException
 class ConnectionRequiredException extends SendbirdException {
-  ConnectionRequiredException()
+  ConnectionRequiredException({SendStage? sendStage = SendStage.beforeWrite})
       : super(
+            sendStage: sendStage,
             name: (ConnectionRequiredException).toString(),
             code: SendbirdError.connectionRequired);
 }
@@ -59,8 +67,9 @@ class ConnectionCanceledException extends SendbirdException {
 
 /// WebSocketFailedException
 class WebSocketFailedException extends SendbirdException {
-  WebSocketFailedException({int? code, String? message})
+  WebSocketFailedException({int? code, String? message, SendStage? sendStage})
       : super(
+            sendStage: sendStage,
             name: (WebSocketFailedException).toString(),
             code: code ?? SendbirdError.webSocketConnectionFailed,
             message: message);

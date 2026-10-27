@@ -11,6 +11,7 @@ import 'package:sendbird_chat_sdk/src/public/core/user/sender.dart';
 import 'package:sendbird_chat_sdk/src/public/core/user/user.dart';
 import 'package:sendbird_chat_sdk/src/public/main/chat/sendbird_chat.dart';
 import 'package:sendbird_chat_sdk/src/public/main/define/enums.dart';
+import 'package:sendbird_chat_sdk/src/public/main/define/exceptions.dart';
 import 'package:sendbird_chat_sdk/src/public/main/model/info/scheduled_info.dart';
 import 'package:sendbird_chat_sdk/src/public/main/model/message/message_meta_array.dart';
 import 'package:sendbird_chat_sdk/src/public/main/model/og/og_meta_data.dart';
@@ -166,11 +167,16 @@ class FileMessage extends BaseMessage {
     required FileMessageCreateParams params,
     required BaseChannel channel,
   }) {
+    if (params.requestId?.isEmpty == true) {
+      throw InvalidParameterException();
+    }
+    final reservedRequestId = params.requestId;
+    params.requestId = null;
     final message = FileMessage(
       channelType: channel.channelType,
       channelUrl: channel.channelUrl,
       messageId: 0,
-      requestId: const Uuid().v4(),
+      requestId: reservedRequestId ?? const Uuid().v4(),
       // BaseMessageCreateParams
       data: params.data,
       customType: params.customType,

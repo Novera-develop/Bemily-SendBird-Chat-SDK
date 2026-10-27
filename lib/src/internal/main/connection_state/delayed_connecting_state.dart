@@ -35,13 +35,13 @@ class DelayedConnectingState extends BaseConnectionState {
     }
   }
 
-  void _cancelRetryAfterTimer() {
+  void cancelRetryAfterTimer() {
     retryAfterTimer?.cancel();
     retryAfterTimer = null;
   }
 
   void _setRetryAfterTimer() {
-    _cancelRetryAfterTimer();
+    cancelRetryAfterTimer();
 
     retryAfterTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       retryAfter -= 1;
@@ -54,11 +54,7 @@ class DelayedConnectingState extends BaseConnectionState {
   }
 
   Future<void> _tryToConnect() async {
-    await chat.connectionManager.doDisconnect(clear: false);
-    await chat.connectionManager.doReconnect(
-      reset: true,
-      isDelayedConnecting: true,
-    );
+    await chat.connectionManager.reconnectAfterDelay(this);
   }
 
   @override
@@ -97,7 +93,7 @@ class DelayedConnectingState extends BaseConnectionState {
     sbLog.i(StackTrace.current);
 
     if (logout) {
-      _cancelRetryAfterTimer();
+      cancelRetryAfterTimer();
       await chat.connectionManager.doDisconnect(clear: logout, logout: logout);
     }
   }
@@ -112,11 +108,11 @@ class DelayedConnectingState extends BaseConnectionState {
   Future<void> enterBackground() async {
     sbLog.i(StackTrace.current);
 
-    _cancelRetryAfterTimer();
+    cancelRetryAfterTimer();
     await chat.connectionManager.doDisconnect(
       clear: false,
       fromEnterBackground: true,
-      timeForDelayedConnectingState: DateTime.now().millisecondsSinceEpoch,
+      timeForDelayedConnectingState: chat.connectionManager.now.millisecondsSinceEpoch,
       retryAfterForDelayedConnectingState: retryAfter,
       reasonCodeForDelayedConnectingState: reasonCode,
       messageForDelayedConnectingState: message,

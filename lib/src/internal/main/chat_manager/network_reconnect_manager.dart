@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:uuid/uuid.dart';
+
 import 'package:sendbird_chat_sdk/src/public/main/handler/network_path_hooks.dart';
 
 enum SocketEventKind {
@@ -105,4 +107,18 @@ class SocketAttempt {
         ? SocketEventKind.websocketClosed
         : SocketEventKind.authenticationFailed, key, error: error));
   }
+}
+
+class ConnectionAttempt {
+  ConnectionAttempt(Duration budget, {DateTime? since})
+      : id = const Uuid().v4(), since = since ?? DateTime.now() {
+    deadline = this.since.add(budget);
+  }
+
+  final String id;
+  final DateTime since;
+  late final DateTime deadline;
+  ConnectionAttemptPhase phase = ConnectionAttemptPhase.preparing;
+  bool active = true;
+  final stopped = Completer<void>();
 }

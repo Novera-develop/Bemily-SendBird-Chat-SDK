@@ -81,7 +81,7 @@ void _registerSessionOwnershipTests() {
             await _flush(tester);
             await replacement;
           }
-          firstLogin.completeError(ConnectionCanceledException());
+          expect(firstLogin.isCompleted, isTrue);
           await _flush(tester);
           await first;
         } else {
@@ -108,6 +108,9 @@ void _registerSessionOwnershipTests() {
     expect(await pending, same(storage.user));
     expect(fixture.chat.chatContext.currentUser, same(storage.user));
     expect((fixture.connection as _Connection).reconnectResets, [true]);
+    expect(fixture.connection.connectionSnapshot.authenticated, isFalse);
+    expect(fixture.connection.reconnectTimer?.isActive == true ||
+        fixture.starts > _one, isTrue);
     fixture.dispose();
     await _flush(tester);
   });
@@ -130,7 +133,8 @@ class _RecoveryManager extends DBManager {
   @override
   DB getDB() => storage;
   @override
-  Future<void> setLoginInfo(ChatContext context, User user) async {}
+  Future<void> setLoginInfo(ChatContext context, User user,
+      {bool Function()? shouldPersist}) async {}
   @override
   Future<void> clear() async {}
 }
@@ -159,7 +163,7 @@ class _RecoveryDB implements DB {
     return user;
   }
   @override
-  Future<void> clear() async { clears++; }
+  Future<void> clear({bool Function()? shouldPersist}) async { clears++; }
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

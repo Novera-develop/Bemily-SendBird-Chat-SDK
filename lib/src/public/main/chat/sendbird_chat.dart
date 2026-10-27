@@ -28,6 +28,20 @@ class SendbirdChat {
   NetworkConnectionSnapshot get connectionSnapshot =>
       _chat.connectionManager.connectionSnapshot;
 
+  ConnectionAttemptSnapshot getConnectionAttempt() =>
+      _chat.connectionManager.getConnectionAttempt();
+
+  Future<bool> advanceReconnect() => _chat.connectionManager.advanceReconnect();
+
+  Future<TransportRecoveryResult> recoverTransport({Duration? deadline}) =>
+      _chat.connectionManager.recoverTransport(deadline: deadline);
+
+  void addDispatchObserver(String id, DispatchObserver observer) =>
+      _chat.commandManager.addDispatchObserver(id, observer);
+
+  void removeDispatchObserver(String id) =>
+      _chat.commandManager.removeDispatchObserver(id);
+
   /// Private constructor
   SendbirdChat._();
 

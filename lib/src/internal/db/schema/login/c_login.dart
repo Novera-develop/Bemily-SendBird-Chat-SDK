@@ -59,11 +59,13 @@ class CLogin {
     return login;
   }
 
-  static Future<CLogin> upsert(Chat chat, Isar isar, Login login) async {
+  static Future<CLogin> upsert(Chat chat, Isar isar, Login login,
+      {bool Function()? shouldPersist}) async {
     final cLogin = CLogin.fromLogin(login);
 
     // Login
     await chat.dbManager.write(() async {
+      if (shouldPersist?.call() == false) return;
       await isar.cLogins.put(cLogin);
     });
 

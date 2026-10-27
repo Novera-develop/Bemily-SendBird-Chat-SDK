@@ -206,24 +206,41 @@ class DBManager {
   }
 
   // Login
-  Future<void> setLoginInfo(ChatContext context, User user) async {
-    if (isEnabled()) {
-      final login = await _db.getLogin(user.userId);
-      if (login == null) {
-        await _db.clear(); // Defensive
-      }
-
-      await _db.upsertUser(user);
-      await _db.upsertLogin(Login(
-        userId: user.userId,
-        services: context.services,
-        appInfo: context.appInfo,
-        uploadSizeLimit: context.uploadSizeLimit,
-        maxUnreadCountOnSuperGroup: context.maxUnreadCountOnSuperGroup,
-        lastConnectedAt: context.lastConnectedAt,
-        reconnectConfig: context.reconnectConfig,
-      ));
+  Future<void> setLoginInfo(ChatContext context, User user,
+      {bool Function()? shouldPersist}) async {
+    if (!isEnabled() || shouldPersist?.call() == false) return;
+    final appInfo = context.appInfo == null ? null : CAppInfo.fromAppInfo(context.appInfo!);
+    if (appInfo != null) {
+      appInfo.premiumFeatureList = List.unmodifiable(appInfo.premiumFeatureList);
+      appInfo.attributesInUse = List.unmodifiable(appInfo.attributesInUse);
     }
+    final snapshot = Login(
+      userId: user.userId,
+      services: List.unmodifiable(context.services),
+      appInfo: appInfo?.toAppInfo(),
+      uploadSizeLimit: context.uploadSizeLimit,
+      maxUnreadCountOnSuperGroup: context.maxUnreadCountOnSuperGroup,
+      lastConnectedAt: context.lastConnectedAt,
+      reconnectConfig: context.reconnectConfig == null ? null :
+          CReconnectConfiguration.fromReconnectConfiguration(context.reconnectConfig!)
+              .toReconnectConfiguration(),
+      chat: _chat,
+    );
+    final userSnapshot = CUser.fromUser(user);
+    final db = getDB();
+    final login = await db.getLogin(snapshot.userId);
+    if (shouldPersist?.call() == false) return;
+    if (login == null) {
+      await db.clear(shouldPersist: shouldPersist);
+      if (shouldPersist?.call() == false) return;
+    }
+    final savedUser = CUser.setCUser(
+        User(userId: userSnapshot.userId, nickname: userSnapshot.nickname)..set(_chat),
+        userSnapshot);
+    if (shouldPersist?.call() == false) return;
+    await db.upsertUser(savedUser, shouldPersist: shouldPersist);
+    if (shouldPersist?.call() == false) return;
+    await db.upsertLogin(snapshot, shouldPersist: shouldPersist);
   }
 
   Future<int?> getLastConnectedAt(String userId) async {

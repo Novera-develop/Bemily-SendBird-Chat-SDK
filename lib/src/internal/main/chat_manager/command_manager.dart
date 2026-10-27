@@ -47,6 +47,7 @@ import 'package:sendbird_chat_sdk/src/public/main/model/thread/thread_info_updat
 import 'package:uuid/uuid.dart';
 
 class CommandManager {
+  Object _loginPayloadIdentity = Object();
   final Map<String, Completer<Command?>> _completerMap = {};
   final Map<String, Timer> _ackTimerMap = {};
   // Separate timer to quickly detect silently dead WS connections.
@@ -57,6 +58,25 @@ class CommandManager {
   final Map<String, int> _readMap = {};
   final Map<String, Completer<int?>> messageOffsetTsCompleterMap = {};
   final Map<String, int> _dedupIdMap = {};
+
+  final Map<String, DispatchObserver> _dispatchObservers = {};
+
+  void addDispatchObserver(String id, DispatchObserver observer) {
+    _dispatchObservers[id] = observer;
+  }
+
+  void removeDispatchObserver(String id) => _dispatchObservers.remove(id);
+
+  void _notifyDispatched(String? requestId, List<DispatchObserver> observers) {
+    if (requestId == null) return;
+    for (final observer in observers) {
+      try {
+        observer(requestId, SendStage.afterWrite);
+      } catch (error, stack) {
+        sbLog.e(stack, error.toString());
+      }
+    }
+  }
 
   int? logiTs;
 
@@ -93,7 +113,8 @@ class CommandManager {
           hasCallback, _chat.chatContext.accessToken));
     } catch (e) {
       sbLog.e(StackTrace.current, 'e: $e');
-      throw WebSocketFailedException(message: e.toString());
+      throw WebSocketFailedException(message: e.toString(),
+          sendStage: e is SendbirdException ? e.sendStage : null);
     }
   }
 
@@ -120,6 +141,7 @@ class CommandManager {
   void clearCompleterMap({SendbirdException? e}) {
     final exception =
         e ?? WebSocketFailedException(message: 'WebSocket connection closed');
+    exception.sendStage = SendStage.afterWrite;
     _completerMap.forEach((key, value) {
       if (!value.isCompleted) {
         value.completeError(exception);
@@ -160,79 +182,87 @@ class CommandManager {
   }
 
   Future<Command?> sendCommand(Command cmd) async {
-    if (_chat.chatContext.currentUser == null) {
-      // NOTE: some test cases execute async socket data
-      throw ConnectionRequiredException();
-    }
-    if (!_chat.connectionManager.webSocketClient.isConnected()) {
-      throw ConnectionRequiredException();
-    }
-
-    sbLog.d(
-        StackTrace.current, () => '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
-
-    runZonedGuarded(() {
-      _chat.connectionManager.webSocketClient.send(cmd.encode());
-    }, (e, s) {
-      sbLog.e(StackTrace.current, 'e: $e');
-      _ackTimerMap.remove(cmd.requestId)?.cancel();
-
-      if (e is SendbirdException) {
-        throw e;
-      } else {
-        throw SendbirdException(message: e.toString());
+    var stage = SendStage.beforeWrite;
+    try {
+      if (_chat.chatContext.currentUser == null ||
+          !_chat.connectionManager.webSocketClient.isConnected()) {
+        throw ConnectionRequiredException();
       }
-    });
+      sbLog.d(StackTrace.current,
+          () => '\n-[cmd] ${cmd.cmd}\n-[payload] ${cmd.payload}');
+      final encoded = cmd.encode();
+      final observers = List<DispatchObserver>.of(_dispatchObservers.values);
+      void write() {
+        stage = SendStage.afterWrite;
+        _chat.connectionManager.webSocketClient.send(encoded);
+        _notifyDispatched(cmd.requestId, observers);
+      }
+      final reqId = cmd.requestId;
+      if (cmd.isAckRequired && reqId != null) {
+        final completer = Completer<Command>();
+        _completerMap[reqId] = completer;
+        write();
+        if (completer.isCompleted) return await completer.future;
 
-    final reqId = cmd.requestId;
-    if (cmd.isAckRequired && reqId != null) {
-      final completer = Completer<Command>();
-      _completerMap[reqId] = completer;
-
-      final timer = Timer(
-          Duration(seconds: _chat.chatContext.options.webSocketTimeout), () {
-        _ackTimerMap.remove(reqId);
-        _deadWsTimerMap.remove(reqId)?.cancel();
-        final c = _completerMap.remove(reqId);
-        if (c != null && !c.isCompleted) {
-          c.completeError(AckTimeoutException());
-        }
-        // Dead WS check is handled by _deadWsTimerMap (already fired or cancelled).
-      });
-
-      _ackTimerMap[reqId] = timer;
-
-      // Start a faster dead-WS detection timer (shorter than webSocketTimeout).
-      // If no ACK returns within _deadWsDetectionSeconds, the WS connection is
-      // likely silently dead (e.g., on a dying network interface after handoff).
-      // Force-close the WS so reconnect happens quickly, then startAutoResend()
-      // re-sends the message on the new connection.
-      if (_chat.chatContext.options.webSocketTimeout > _deadWsDetectionSeconds) {
-        final deadWsTimer =
-            Timer(const Duration(seconds: _deadWsDetectionSeconds), () {
-          _deadWsTimerMap.remove(reqId);
-          if (_completerMap.containsKey(reqId) &&
-              _chat.connectionManager.webSocketClient.isConnected()) {
-            _ackTimerMap.remove(reqId)?.cancel();
-            final completer = _completerMap.remove(reqId);
-            if (completer != null && !completer.isCompleted) {
-              completer.completeError(WebSocketFailedException());
-            }
-            sbLog.w(StackTrace.current,
-                () => 'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
-            _chat.connectionManager.webSocketClient
-                .close(reason: 'DeadWsDetection - no ACK in ${_deadWsDetectionSeconds}s');
+        final timer = Timer(
+            Duration(seconds: _chat.chatContext.options.webSocketTimeout), () {
+          _ackTimerMap.remove(reqId);
+          _deadWsTimerMap.remove(reqId)?.cancel();
+          final c = _completerMap.remove(reqId);
+          if (c != null && !c.isCompleted) {
+            c.completeError(AckTimeoutException());
           }
+          // Dead WS check is handled by _deadWsTimerMap (already fired or cancelled).
         });
-        _deadWsTimerMap[reqId] = deadWsTimer;
-      }
-      if (cmd.isRead) {
-        _readMap[reqId] = DateTime.now().millisecondsSinceEpoch;
-      }
 
-      return completer.future;
-    } else {
-      return null;
+        _ackTimerMap[reqId] = timer;
+
+        // Start a faster dead-WS detection timer (shorter than webSocketTimeout).
+        // If no ACK returns within _deadWsDetectionSeconds, the WS connection is
+        // likely silently dead (e.g., on a dying network interface after handoff).
+        // Force-close the WS so reconnect happens quickly, then startAutoResend()
+        // re-sends the message on the new connection.
+        if (_chat.chatContext.options.webSocketTimeout > _deadWsDetectionSeconds) {
+          final deadWsTimer =
+              Timer(const Duration(seconds: _deadWsDetectionSeconds), () {
+            _deadWsTimerMap.remove(reqId);
+            if (_completerMap.containsKey(reqId) &&
+                _chat.connectionManager.webSocketClient.isConnected()) {
+              _ackTimerMap.remove(reqId)?.cancel();
+              final completer = _completerMap.remove(reqId);
+              if (completer != null && !completer.isCompleted) {
+                completer.completeError(WebSocketFailedException(
+                    sendStage: SendStage.afterWrite));
+              }
+              sbLog.w(StackTrace.current,
+                  () => 'No ACK after ${_deadWsDetectionSeconds}s — WS may be dead, forcing close to trigger reconnect');
+              _chat.connectionManager.webSocketClient
+                  .close(reason: 'DeadWsDetection - no ACK in ${_deadWsDetectionSeconds}s');
+            }
+          });
+          _deadWsTimerMap[reqId] = deadWsTimer;
+        }
+        if (cmd.isRead) {
+          _readMap[reqId] = DateTime.now().millisecondsSinceEpoch;
+        }
+
+        return await completer.future;
+      } else {
+        write();
+        return null;
+      }
+    } catch (error, stack) {
+      _ackTimerMap.remove(cmd.requestId)?.cancel();
+      _deadWsTimerMap.remove(cmd.requestId)?.cancel();
+      _completerMap.remove(cmd.requestId);
+      final exception = error is SendbirdException
+          ? error : SendbirdException(message: error.toString());
+      if (stage == SendStage.beforeWrite) {
+        exception.sendStage = stage;
+      } else {
+        exception.sendStage ??= stage;
+      }
+      Error.throwWithStackTrace(exception, stack);
     }
   }
 
@@ -269,13 +299,15 @@ class CommandManager {
       final completer = _completerMap.remove(cmd.requestId);
 
       if (cmd.isError || cmd.hasError) {
-        if (cmd.errorCode == SendbirdError.accessTokenNotValid) {
+        if (!cmd.isLogin && cmd.errorCode == SendbirdError.accessTokenNotValid) {
           _chat.eventManager.notifyAccessTokenRequired();
         }
         completer?.completeError(SendbirdException(
           code: cmd.errorCode,
           message: cmd.errorMessage,
+          sendStage: SendStage.afterWrite,
         ));
+        if (cmd.isLogin) await _processError(cmd);
         return;
       } else {
         completer?.complete(cmd);
@@ -380,10 +412,17 @@ class CommandManager {
   }) async {
     final connection = _chat.connectionManager;
     final socket = fromWebSocket ? connection.callbackSocket : null;
-    bool isCurrent() => !fromWebSocket ||
-        connection.isCallbackCurrent(socket);
-    if (!isCurrent()) return;
+    if (fromWebSocket && !connection.isCallbackCurrent(socket)) return;
     final event = LoginEvent.fromJson(loginPayload);
+    final payloadIdentity = _loginPayloadIdentity = Object();
+    final login = _chat.chatContext.loginCompleter;
+    final completingTransport = login != null || connection.reconnectNotificationPending;
+    connection.replaceSessionOwner();
+    final owner = connection.authenticatedSessionIdentity;
+    bool ownsSession() => identical(owner, connection.authenticatedSessionIdentity);
+    bool isCurrent() => identical(payloadIdentity, _loginPayloadIdentity) &&
+        (ownsSession() || (fromWebSocket && completingTransport)) &&
+        (!fromWebSocket || connection.isLoginTransportCurrent(socket));
     event.user.set(_chat);
 
     final services = loginPayload['services'] as List<dynamic>?;
@@ -405,7 +444,6 @@ class CommandManager {
       ..currentUser = event.user
       ..currentUserId = event.user.userId
       ..nickname = event.user.nickname
-      ..sessionKey = event.sessionKey
       ..eKey = event.eKey
       ..appInfo = event.appInfo
       ..uploadSizeLimit = event.appInfo.uploadSizeLimit * 1024 * 1024
@@ -413,17 +451,22 @@ class CommandManager {
       ..lastConnectedAt = event.loginTimestamp
       ..reconnectConfig = event.reconnectConfiguration;
 
-    _chat.sessionManager.setSessionKey(event.sessionKey);
+    if (ownsSession()) {
+      _chat.chatContext.sessionKey = event.sessionKey;
+      _chat.sessionManager.setSessionKey(event.sessionKey);
+    }
 
     //+ [DBManager]
     if (_chat.dbManager.isEnabled()) {
-      await _chat.dbManager.setLoginInfo(_chat.chatContext, event.user);
+      await _chat.dbManager.setLoginInfo(_chat.chatContext, event.user,
+          shouldPersist: isCurrent);
       if (!isCurrent()) return;
     }
     //- [DBManager]
 
     if (fromWebSocket) {
-      final wasReconnecting = _chat.connectionManager.isReconnecting();
+      final wasReconnecting = _chat.connectionManager.isReconnecting() ||
+          connection.reconnectNotificationPending;
       if (wasReconnecting) {
         _chat.statManager.endWsConnectStat(
           hostUrl: _chat.chatContext.reconnectTask?.url ?? '',
@@ -441,33 +484,40 @@ class CommandManager {
       _chat.chatContext.setPingInterval(event.pingInterval);
       _chat.chatContext.setWatchdogInterval(event.watchdogInterval);
 
+      if (!isCurrent()) return;
+      connection.authenticatedSocket();
+      if (!connection.connectionSnapshot.authenticated) return;
       _chat.connectionManager.changeState(ConnectedState(chat: _chat));
+      connection.authenticatedTransport();
 
       if (wasReconnecting) {
+        connection.notifyReconnectSucceeded();
+        if (!isCurrent()) return;
         // Complete loginCompleter immediately after ConnectedState so that
         // reconnectForNetworkChange() (and any other waiter) can unblock
         // without waiting for _refresh() inside onReconnected().
         // _refresh() and startAutoResend() still run below in the background.
-        _chat.chatContext.loginCompleter?.complete(event.user);
-        _chat.chatContext.loginCompleter = null;
+        if (identical(login, _chat.chatContext.loginCompleter)) {
+          if (login != null && !login.isCompleted) login.complete(event.user);
+          _chat.chatContext.loginCompleter = null;
+        }
         await _chat.eventDispatcher.onReconnected(event);
         if (!isCurrent()) return;
       } else {
         await _chat.eventDispatcher.onLogin(event);
         if (!isCurrent()) return;
-        _chat.chatContext.loginCompleter?.complete(event.user);
-        _chat.chatContext.loginCompleter = null;
+        if (identical(login, _chat.chatContext.loginCompleter)) {
+          if (login != null && !login.isCompleted) login.complete(event.user);
+          _chat.chatContext.loginCompleter = null;
+        }
       }
 
       await _enterEnteredOpenChannels();
       if (!isCurrent()) return;
 
-      if (wasReconnecting) {
-        _chat.eventManager.notifyReconnectSucceeded();
-      } else {
+      if (!wasReconnecting) {
         _chat.eventManager.notifyConnected(event.user.userId);
       }
-      connection.authenticatedSocket();
     } else {
       await _chat.eventDispatcher.onLogin(event);
     }
@@ -482,6 +532,12 @@ class CommandManager {
         cmd.payload['retry_after'] is int &&
         cmd.payload['retry_after'] >= 0) {
       retryAfter = cmd.payload['retry_after'] as int;
+      final connection = _chat.connectionManager;
+      final socket = connection.socketIdentity;
+      final key = connection.connectionSnapshot.key;
+      final attemptId = connection.getConnectionAttempt().attemptId;
+      final delay = Duration(seconds: retryAfter);
+      final retryAt = connection.recordRetryAfter(delay);
 
       if (cmd.payload['reason_code'] != null &&
           cmd.payload['reason_code'] is int) {
@@ -528,9 +584,17 @@ class CommandManager {
         await _chat.connectionManager.disconnect(logout: false);
       }
 
+      if (!connection.isCallbackCurrent(socket) ||
+          !identical(socket, connection.socketIdentity) ||
+          !identical(key, connection.connectionSnapshot.key) ||
+          attemptId != connection.getConnectionAttempt().attemptId) return;
+      final recovering = connection.isRecoveringTransport;
+      connection.respectRetryAfter(delay, retryAt: retryAt);
+      if (recovering) return;
+      final remaining = retryAt.difference(connection.now);
       _chat.connectionManager.changeState(DelayedConnectingState(
         chat: _chat,
-        retryAfter: retryAfter,
+        retryAfter: (remaining.inMicroseconds / Duration.microsecondsPerSecond).ceil(),
         reasonCode: reasonCode,
         message: message,
       ));
@@ -572,12 +636,14 @@ class CommandManager {
     _chat.sessionManager.setSessionKey(null);
 
     if (cmd.payload['reason'] == SendbirdError.accessTokenRevoked) {
-      await _chat.connectionManager.disconnect(logout: true);
+      final ownsTransition = _chat.connectionManager.requireAuthentication();
+      if (!ownsTransition()) return;
       _chat.eventManager.notifySessionClosed();
     } else if (cmd.payload['expires_in'] != null
         ? cmd.payload['expires_in'] < 0
         : false) {
-      await _chat.connectionManager.disconnect(logout: true);
+      final ownsTransition = _chat.connectionManager.requireAuthentication();
+      if (!ownsTransition()) return;
       _chat.eventManager.notifySessionClosed();
     } else {
       _chat.statManager.appendWsDisconnectStat(
@@ -586,7 +652,13 @@ class CommandManager {
         errorDescription: "cause=session_expired",
       );
 
-      await _chat.sessionManager.updateSessionKey();
+      final connection = _chat.connectionManager;
+      final owner = connection.authenticatedSessionIdentity;
+      try {
+        await _chat.sessionManager.updateSessionKey();
+      } on ConnectionCanceledException {
+        if (identical(owner, connection.authenticatedSessionIdentity)) rethrow;
+      }
     }
   }
 
@@ -972,8 +1044,14 @@ class CommandManager {
     sbLog.d(StackTrace.current);
 
     final event = SessionEvent.fromJson(cmd.payload);
-
+    final connection = _chat.connectionManager;
+    final socket = connection.callbackSocket;
+    if (!connection.isCallbackCurrent(socket)) return;
+    connection.replaceSessionOwner();
+    final owner = connection.authenticatedSessionIdentity;
     await _chat.sessionManager.setSessionKey(event.sessionKey);
+    if (!connection.isCallbackCurrent(socket) ||
+        !identical(owner, connection.authenticatedSessionIdentity)) return;
     _chat.eventManager.notifySessionRefreshed();
   }
 
@@ -981,31 +1059,42 @@ class CommandManager {
     sbLog.e(StackTrace.current,
         'cmd: ${cmd.cmd}, errorMessage: ${cmd.errorMessage ?? ''}');
 
-    if (cmd.errorCode == SendbirdError.sessionKeyExpired) {
-      await _chat.sessionManager.updateSessionKey();
-    } else if (cmd.errorCode == SendbirdError.accessTokenRevoked) {
-      if (_chat.chatContext.loginCompleter != null &&
-          !_chat.chatContext.loginCompleter!.isCompleted) {
-        _chat.chatContext.loginCompleter
-            ?.completeError(AccessTokenRevokedException());
+    final authenticationError = cmd.errorCode == SendbirdError.sessionKeyExpired ||
+        cmd.errorCode == SendbirdError.accessTokenRevoked ||
+        cmd.errorCode == SendbirdError.accessTokenNotValid ||
+        cmd.errorCode == SendbirdError.tokenExpired ||
+        cmd.errorCode == SendbirdError.nonAuthorized ||
+        cmd.errorCode == SendbirdError.authUnknownError ||
+        cmd.errorCode == SendbirdError.userDeactivated ||
+        cmd.errorCode == SendbirdError.userNotExist;
+    if (authenticationError) {
+      final exception = SendbirdException(code: cmd.errorCode,
+          message: cmd.errorMessage, sendStage: SendStage.afterWrite);
+      final login = _chat.chatContext.loginCompleter;
+      _chat.chatContext.loginCompleter = null;
+      if (login != null && !login.isCompleted) login.completeError(exception);
+      final ownsTransition = _chat.connectionManager.requireAuthentication();
+      if (!ownsTransition()) return;
+      if (cmd.errorCode == SendbirdError.sessionKeyExpired ||
+          cmd.errorCode == SendbirdError.accessTokenNotValid) {
+        _chat.eventManager.notifyAccessTokenRequired();
+      } else if (cmd.errorCode == SendbirdError.accessTokenRevoked) {
+        _chat.eventManager.notifySessionClosed();
+      } else {
+        _chat.eventManager.notifyAccessTokenRequired();
+        if (!ownsTransition()) return;
+        _chat.eventManager.notifySessionError(exception);
       }
-
-      await _chat.connectionManager.disconnect(logout: true);
-      _chat.eventManager.notifySessionClosed();
-    } else if (cmd.errorCode == SendbirdError.accessTokenNotValid) {
-      if (_chat.chatContext.loginCompleter != null &&
-          !_chat.chatContext.loginCompleter!.isCompleted) {
-        _chat.chatContext.loginCompleter
-            ?.completeError(InvalidAccessTokenException());
-      }
-
-      await _chat.connectionManager.disconnect(logout: true);
-      _chat.eventManager.notifySessionError(InvalidAccessTokenException());
-    } else {
-      await _chat.connectionManager.disconnect(logout: true);
-      throw WebSocketFailedException(
-          code: cmd.errorCode, message: cmd.errorMessage);
+      return;
     }
+    if (_chat.connectionManager.isRecoveringTransport) {
+      _chat.connectionManager.failTransportAttempt(SendbirdException(
+          code: cmd.errorCode, message: cmd.errorMessage));
+      return;
+    }
+    await _chat.connectionManager.disconnect(logout: true);
+    throw WebSocketFailedException(
+        code: cmd.errorCode, message: cmd.errorMessage);
   }
 
   Future<void> _processSystemEvent(Command cmd) async {

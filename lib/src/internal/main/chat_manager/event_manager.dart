@@ -31,10 +31,10 @@ class EventManager {
   final Set<String> _internalChannelHandlerIdentifiers = {};
 
   SessionHandler? _sessionHandler;
-  final AccessTokenRequester _accessTokenRequester;
+  final SessionManager _sessionManager;
 
   EventManager({required SessionManager sessionManager})
-      : _accessTokenRequester = sessionManager.accessTokenRequester;
+      : _sessionManager = sessionManager;
 
   void addChannelHandler(String identifier, RootChannelHandler handler) {
     if (handler is BaseChannelHandler) {
@@ -617,7 +617,7 @@ class EventManager {
   // SessionHandler
   void notifyAccessTokenRequired() {
     sbLog.i(StackTrace.current);
-    _sessionHandler?.onAccessTokenRequired(_accessTokenRequester);
+    _sessionHandler?.onAccessTokenRequired(_sessionManager.createAccessTokenRequester());
   }
 
   void notifySessionClosed() {

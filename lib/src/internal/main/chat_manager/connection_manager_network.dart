@@ -14,6 +14,10 @@ extension _NetworkConnection on ConnectionManager {
     if (!isCallbackCurrent(socket)) return;
     if (!isCurrent()) return;
     sbLog.e(StackTrace.current, 'e: $e');
+    if (isDelayedConnecting && _connectionAttempt != null) {
+      _failAttempt(e);
+      return;
+    }
 
     if (!isDisconnected()) {
       if (!isDelayedConnecting) {
@@ -114,7 +118,7 @@ extension _NetworkConnection on ConnectionManager {
 
   bool _isSocketStartCurrent(Object? socket) {
     final reservation = Zone.current[ConnectionManager._sdkReservationZone];
-    return isCallbackCurrent(socket) &&
+    return _isAttemptCurrent && isCallbackCurrent(socket) &&
         (reservation == null || identical(reservation, _sdkReservation));
   }
 
@@ -124,11 +128,13 @@ extension _NetworkConnection on ConnectionManager {
         !identical(reservation, _sdkReservation) ||
         !identical(socket, _socketIdentity)) return;
     _sdkReservation = null;
+    _finishAttempt();
     reconnectTimer?.cancel();
     reconnectTimer = null;
+    _scheduledReconnect = null;
     changeState(_sdkAttempt?.isAuthenticated == true && webSocketClient.isConnected()
         ? ConnectedState(chat: chat) : DisconnectedState(chat: chat));
-    reservation.closed(error: ConnectionCanceledException());
+    reservation.closed();
   }
 
   void _connectSocket(String url,
@@ -142,6 +148,8 @@ extension _NetworkConnection on ConnectionManager {
     if (identical(previousAttempt, _sdkAttempt) &&
         previousAttempt?.isAuthenticated == true && webSocketClient.isConnected()) {
       changeState(ConnectedState(chat: chat));
+      _finishAttempt();
+      notifyReconnectSucceeded();
     }
   }
 
@@ -149,6 +157,7 @@ extension _NetworkConnection on ConnectionManager {
     _sdkReservation = null;
     final attempt = socketTracker.createSdkAttempt();
     _sdkAttempt = attempt;
+    _connectionAttempt?.phase = ConnectionAttemptPhase.handshake;
     attempt.started();
     runZonedGuarded(connect, (error, stack) {
       if (!identical(attempt, _sdkAttempt)) return;
@@ -161,14 +170,41 @@ extension _NetworkConnection on ConnectionManager {
 
   Timer _scheduleSocketReconnect(Duration delay,
       Future<void> Function() action) {
+    final publicConnect = _publicConnectIdentity;
     final attempt = socketTracker.reserveSdkAttempt(preserveConnection:
         _sdkAttempt?.isActive == true && webSocketClient.isConnected());
     _sdkReservation = attempt;
     attempt.scheduled(socketTracker.now + delay);
-    return Timer(delay, () => runZoned(action,
-        zoneValues: {ConnectionManager._sdkAttemptZone: null,
-          ConnectionManager._sdkReservationZone: attempt}));
+    final inherited = Zone.current[ConnectionManager._connectionAttemptZone];
+    final existing = identical(inherited, _connectionAttempt)
+        ? _connectionAttempt : null;
+    if (existing == null) _finishAttempt();
+    _retryAt = now.add(delay);
+    Future<void> start() async {
+      if (!identical(attempt, _sdkReservation)) return;
+      reconnectTimer = null;
+      _scheduledReconnect = null;
+      final connectionAttempt = existing ?? _beginAttempt(
+          chat.chatContext.options.reconnectAttemptDeadline);
+      if (!connectionAttempt.active) return;
+      _retryAt = null;
+      await runZoned(() async {
+        try {
+          await action();
+        } catch (error) {
+          if (_isAttemptCurrent) _failAttempt(error);
+        }
+      }, zoneValues: {
+        ConnectionManager._publicConnectZone: publicConnect,
+        ConnectionManager._sdkAttemptZone: null,
+        ConnectionManager._sdkReservationZone: attempt,
+        ConnectionManager._connectionAttemptZone: connectionAttempt,
+      });
+    }
+    _scheduledReconnect = start;
+    return Timer(delay, start);
   }
+
   WebSocketClient _createWebSocketClient() {
     final socket = Object();
     _socketIdentity = socket;
@@ -199,16 +235,24 @@ extension _NetworkConnection on ConnectionManager {
 // WebSocket Event Listener
 //------------------------------//
   void _onWebSocketConnected() {
-    // Nothing to do here.
+    if (!isCallbackCurrent(callbackSocket)) return;
+    _connectionAttempt?.phase = ConnectionAttemptPhase.authenticating;
   }
 
   void _onWebSocketClosed() async {
     if (!isCallbackCurrent(callbackSocket)) return;
     _callbackSdkAttempt?.closed();
+    _failPendingLogin(WebSocketFailedException(sendStage: SendStage.afterWrite));
     chat.commandManager.clearCompleterMap();
     chat.commandManager
         .cancelAckTimers(); // Cancel ack timers to prevent AckTimeoutException
 
+    if (_connectionAttempt?.phase == ConnectionAttemptPhase.preparing) return;
+    if (_recovery != null) {
+      _failAttempt(WebSocketFailedException(sendStage: SendStage.afterWrite));
+      return;
+    }
+    _finishAttempt();
     final closeCode = webSocketClient.getCloseCode();
     if (closeCode != null) {
       chat.statManager.appendWsDisconnectStat(
@@ -278,6 +322,8 @@ extension _NetworkConnection on ConnectionManager {
   Future<void> _onWebSocketError(Object e) async {
     if (!isCallbackCurrent(callbackSocket)) return;
     _callbackSdkAttempt?.closed(error: e);
+    _failPendingLogin(WebSocketFailedException(message: e.toString(),
+        sendStage: SendStage.afterWrite));
     // Immediately fail pending ACK completers so messages go to auto-resend
     // without waiting for the full ACK timeout (webSocketTimeout = 30s).
     // This is especially important on iOS where the watchdog detects a dead
@@ -285,26 +331,51 @@ extension _NetworkConnection on ConnectionManager {
     chat.commandManager.clearCompleterMap(
       e: WebSocketFailedException(message: e.toString()),
     );
+    if (_recovery != null) {
+      _failAttempt(e);
+      return;
+    }
+    _finishAttempt();
     await _reconnectIfNeeded();
   }
 
+  void _failPendingLogin(Object error) {
+    final login = chat.chatContext.loginCompleter;
+    chat.chatContext.loginCompleter = null;
+    if (login != null && !login.isCompleted) login.completeError(error);
+    if (isConnecting()) changeState(DisconnectedState(chat: chat));
+  }
+
   Future<void> _reconnectIfNeeded() async {
+    if (_authRequired || chat.isBackground || _recovery != null) return;
     final socket = _socketIdentity;
-    sbLog.d(StackTrace.current);
-    if (chat.chatContext.currentUser != null) {
-      if (isReconnecting()) {
-        await Future.delayed(_statSettlingDelay); // [Timing issue] Because of endWsConnectStat()
-        if (!identical(socket, _socketIdentity)) return;
-        await reconnect(reset: false);
-      } else {
-        await disconnect(logout: false);
-        if (!identical(socket, _socketIdentity)) return;
-        await reconnect(reset: true);
+    if (chat.chatContext.currentUser == null) {
+      if (_isPublicConnectCurrent && isCallbackCurrent(callbackSocket) &&
+          isReconnecting()) {
+        changeState(DisconnectedState(chat: chat));
+        notifyReconnectFailed();
       }
+      return;
+    }
+    if (isReconnecting()) {
+      await Future.delayed(_statSettlingDelay);
+      if (!identical(socket, _socketIdentity)) return;
+      await reconnect(reset: false);
+    } else {
+      await _runBoundedReconnect(() async {
+        await disconnect(logout: false);
+        if (!_isAttemptCurrent || !identical(socket, _socketIdentity)) return;
+        await reconnect(reset: true);
+      });
     }
   }
 
   void _cancelReconnectTimers() {
+    final state = _currentState;
+    if (state is DelayedConnectingState) state.cancelRetryAfterTimer();
+    _serverRetryOwner = null;
+    _scheduledReconnect = null;
+    _retryAt = null;
     _sdkReservation = null;
     reconnectTimer?.cancel();
     reconnectTimer = null;
@@ -312,4 +383,335 @@ extension _NetworkConnection on ConnectionManager {
     _reconnectIfNeededTimer = null;
   }
 
+}
+
+extension _ConnectionRecovery on ConnectionManager {
+  Future<void> _runBoundedReconnect(Future<void> Function() action) {
+    final attempt = _beginAttempt(chat.chatContext.options.reconnectAttemptDeadline);
+    final operation = runZoned(() async {
+      try {
+        await action();
+      } catch (error) {
+        if (_isAttemptCurrent) _failAttempt(error);
+      }
+    }, zoneValues: {ConnectionManager._connectionAttemptZone: attempt});
+    return Future.any([operation, attempt.stopped.future]);
+  }
+
+  ConnectionAttemptSnapshot _getConnectionAttempt() {
+    final attempt = _connectionAttempt;
+    return ConnectionAttemptSnapshot(
+      attemptId: attempt?.id,
+      since: attempt?.since,
+      deadline: attempt?.deadline,
+      phase: attempt?.phase ?? (_retryAt != null
+          ? ConnectionAttemptPhase.backoff : ConnectionAttemptPhase.idle),
+      retryAt: _retryAt,
+      authRequired: _authRequired,
+    );
+  }
+
+  bool get _isAttemptCurrent {
+    final attempt = Zone.current[ConnectionManager._connectionAttemptZone];
+    return attempt == null ||
+        (identical(attempt, _connectionAttempt) && _connectionAttempt?.active == true);
+  }
+
+  Duration get _serverDelay {
+    final state = _currentState;
+    if (_serverRetryAt == null && state is DelayedConnectingState) {
+      _serverRetryAt = now.add(Duration(seconds: state.retryAfter));
+    } else if (_serverRetryAt == null && state is DisconnectedState &&
+        state.timeForDelayedConnectingState != null &&
+        state.retryAfterForDelayedConnectingState != null) {
+      _serverRetryAt = DateTime.fromMillisecondsSinceEpoch(
+          state.timeForDelayedConnectingState!).add(
+          Duration(seconds: state.retryAfterForDelayedConnectingState!));
+    }
+    final delay = _serverRetryAt?.difference(now) ?? Duration.zero;
+    return delay > Duration.zero ? delay : Duration.zero;
+  }
+
+  void _finishAttempt() {
+    _attemptDeadlineTimer?.cancel();
+    _attemptDeadlineTimer = null;
+    final attempt = _connectionAttempt;
+    if (attempt != null) {
+      attempt.active = false;
+      if (!attempt.stopped.isCompleted) attempt.stopped.complete();
+    }
+    _connectionAttempt = null;
+    _retryAt = null;
+  }
+
+  ConnectionAttempt _beginAttempt(Duration budget) {
+    _finishAttempt();
+    final attempt = ConnectionAttempt(budget, since: now);
+    _connectionAttempt = attempt;
+    _attemptDeadlineTimer = Timer(budget, () {
+      if (!identical(attempt, _connectionAttempt)) return;
+      _failAttempt(LoginTimeoutException(), timedOut: true, attempt: attempt);
+    });
+    return attempt;
+  }
+
+  void _completeRecovery(TransportRecoveryResult result) {
+    _recoveryRetryAfterTimer?.cancel();
+    _recoveryRetryAfterTimer = null;
+    final recovery = _recovery;
+    _recovery = null;
+    if (recovery != null && !recovery.isCompleted) recovery.complete(result);
+  }
+
+  void _cancelAttempt(TransportRecoveryResult result) {
+    final active = _connectionAttempt != null || _recovery != null;
+    _finishAttempt();
+    _cancelReconnectTimers();
+    _completeRecovery(result);
+    if (active) {
+      _sdkAttempt?.closed();
+      _sdkAttempt = null;
+      _socketIdentity = Object();
+    }
+  }
+
+  void _replaceTransport() {
+    socketTracker.invalidateConnection();
+    final previous = webSocketClient;
+    _sdkAttempt?.closed();
+    webSocketClient = _createWebSocketClient();
+    previous.close().catchError((Object error, StackTrace stack) {
+      sbLog.e(stack, error.toString());
+      return false;
+    });
+  }
+
+  void _failAttempt(Object error, {bool timedOut = false,
+      ConnectionAttempt? attempt}) {
+    if (attempt != null) {
+      if (!identical(attempt, _connectionAttempt) || !attempt.active) return;
+    } else if (!_isAttemptCurrent) {
+      return;
+    }
+    if (!timedOut && _recovery != null && _connectionAttempt != null) {
+      chat.commandManager.clearCompleterMap();
+      chat.commandManager.cancelAckTimers();
+      _replaceTransport();
+      chat.chatContext.reconnectTask?.increaseRetryCount();
+      final backoff = Duration(seconds: chat.chatContext.reconnectTask?.backOffPeriod ??
+          _NetworkConnection._initialConnectTrial);
+      _waitForRecoveryRetryAfter(_connectionAttempt!,
+          delay: _serverDelay > backoff ? _serverDelay : backoff);
+      return;
+    }
+    _finishAttempt();
+    _cancelReconnectTimers();
+    chat.commandManager.clearCompleterMap();
+    chat.commandManager.cancelAckTimers();
+    final login = chat.chatContext.loginCompleter;
+    chat.chatContext.loginCompleter = null;
+    if (login != null && !login.isCompleted) login.completeError(error);
+    _replaceTransport();
+    _completeRecovery(timedOut
+        ? TransportRecoveryResult.timeout : TransportRecoveryResult.cancelled);
+    if (chat.isBackground || chat.chatContext.currentUserId == null || _authRequired) {
+      changeState(DisconnectedState(chat: chat));
+      return;
+    }
+    changeState(ReconnectingState(chat: chat));
+    void retry() {
+      _serverRetryAt = null;
+      _retryAt = null;
+      reconnectTimer = null;
+      runZoned(() => doReconnect(foregroundOnly: true), zoneValues: {
+        ConnectionManager._connectionAttemptZone: null,
+        ConnectionManager._socketZone: null,
+        ConnectionManager._sdkAttemptZone: null,
+        ConnectionManager._sdkReservationZone: null,
+      });
+    }
+    if (_serverDelay > Duration.zero) {
+      _retryAt = _serverRetryAt;
+      reconnectTimer = Timer(_serverDelay, retry);
+    } else {
+      retry();
+    }
+  }
+
+  bool Function() _requireAuthentication() {
+    final publicConnect = _publicConnectIdentity;
+    _failPendingLogin(ConnectionCanceledException());
+    _authRequired = true;
+    replaceSessionOwner();
+    _finishAttempt();
+    _cancelReconnectTimers();
+    _completeRecovery(TransportRecoveryResult.authRequired);
+    chat.commandManager.clearCompleterMap();
+    chat.commandManager.cancelAckTimers();
+    _replaceTransport();
+    changeState(DisconnectedState(chat: chat));
+    final session = _authenticatedSessionIdentity;
+    final socket = _socketIdentity;
+    bool ownsTransition() => identical(publicConnect, _publicConnectIdentity) &&
+        identical(session, _authenticatedSessionIdentity) &&
+        identical(socket, _socketIdentity);
+    if (_reconnectNotificationPending) notifyReconnectFailed();
+    return ownsTransition;
+  }
+
+  void _sessionRefreshed() => _authRequired = false;
+
+  void _respectRetryAfter(Duration delay, {DateTime? retryAt}) {
+    _serverRetryAt = retryAt ?? now.add(delay);
+    if (_recovery != null) {
+      _replaceTransport();
+      _waitForRecoveryRetryAfter(_connectionAttempt!);
+    } else {
+      _finishAttempt();
+      _cancelReconnectTimers();
+      _retryAt = _serverRetryAt;
+    }
+  }
+
+  void _restoreServerRetry() {
+    if (chat.isBackground || _authRequired || reconnectTimer?.isActive == true) return;
+    final state = _currentState;
+    if (state is DelayedConnectingState && state.retryAfterTimer?.isActive == true) return;
+    final owner = Object();
+    _serverRetryOwner = owner;
+    final socket = _socketIdentity;
+    final session = _authenticatedSessionIdentity;
+    final attempt = _connectionAttempt;
+    final sdkAttempt = _sdkAttempt;
+    final login = chat.chatContext.loginCompleter;
+    _retryAt = _serverRetryAt;
+    reconnectTimer = Timer(_serverDelay, () {
+      if (!identical(owner, _serverRetryOwner) ||
+          !identical(socket, _socketIdentity) ||
+          !identical(session, _authenticatedSessionIdentity) ||
+          !identical(attempt, _connectionAttempt) ||
+          !identical(sdkAttempt, _sdkAttempt) ||
+          !identical(login, chat.chatContext.loginCompleter) ||
+          isConnected() || connectionSnapshot.authenticated) return;
+      _serverRetryOwner = null;
+      reconnectTimer = null;
+      _retryAt = null;
+      _serverRetryAt = null;
+      if (chat.isBackground || _authRequired) return;
+      runZoned(() => doReconnect(reset: true, foregroundOnly: true), zoneValues: {
+        ConnectionManager._connectionAttemptZone: null,
+        ConnectionManager._socketZone: null,
+        ConnectionManager._sdkAttemptZone: null,
+        ConnectionManager._sdkReservationZone: null,
+      });
+    });
+  }
+
+  void _expireOverdueAttempt() {
+    final attempt = _connectionAttempt;
+    if (attempt != null && !attempt.deadline.isAfter(now)) {
+      _failAttempt(LoginTimeoutException(), timedOut: true, attempt: attempt);
+    }
+  }
+
+  Future<bool> _advanceReconnect() {
+    _expireOverdueAttempt();
+    if (chat.isBackground || _authRequired || _serverDelay > Duration.zero ||
+        isConnected() || isDisconnected()) return Future.value(false);
+    if (_recoveryRetryAfterTimer?.isActive == true && _connectionAttempt != null) {
+      _recoveryRetryAfterTimer?.cancel();
+      _recoveryRetryAfterTimer = null;
+      _startRecovery(_connectionAttempt!);
+      return Future.value(true);
+    }
+    if (_connectionAttempt?.active == true || _recovery != null) {
+      return Future.value(true);
+    }
+    final action = _scheduledReconnect;
+    if (reconnectTimer?.isActive != true || action == null) return Future.value(false);
+    reconnectTimer?.cancel();
+    reconnectTimer = null;
+    action();
+    return Future.value(true);
+  }
+
+  Future<TransportRecoveryResult> _recoverTransport({Duration? deadline}) {
+    _expireOverdueAttempt();
+    if (_recovery != null) return _recovery!.future;
+    if (_authRequired) return Future.value(TransportRecoveryResult.authRequired);
+    if (chat.isBackground || chat.chatContext.currentUserId == null) {
+      return Future.value(TransportRecoveryResult.cancelled);
+    }
+    final delay = _serverDelay;
+    final state = _currentState;
+    if (state is DelayedConnectingState) state.retryAfterTimer?.cancel();
+    _cancelAttempt(TransportRecoveryResult.cancelled);
+    _preserveRecoverySession = true;
+    final recovery = Completer<TransportRecoveryResult>();
+    _recovery = recovery;
+    final attempt = _beginAttempt(
+        deadline ?? chat.chatContext.options.reconnectAttemptDeadline);
+    _socketIdentity = Object();
+    chat.commandManager.clearCompleterMap();
+    chat.commandManager.cancelAckTimers();
+    runZoned(() async {
+      try {
+        await doDisconnect(clear: false, logout: false);
+        if (!_isAttemptCurrent) return;
+        webSocketClient = _createWebSocketClient();
+        changeState(ReconnectingState(chat: chat));
+        if (delay > Duration.zero) {
+          _waitForRecoveryRetryAfter(attempt);
+        } else {
+          await _startRecovery(attempt);
+        }
+      } catch (error) {
+        if (_isAttemptCurrent) _failAttempt(error);
+      }
+    }, zoneValues: {
+      ConnectionManager._connectionAttemptZone: attempt,
+      ConnectionManager._socketZone: null,
+      ConnectionManager._sdkAttemptZone: null,
+      ConnectionManager._sdkReservationZone: null,
+    });
+    return recovery.future;
+  }
+
+  void _waitForRecoveryRetryAfter(ConnectionAttempt attempt, {Duration? delay}) {
+    final wait = delay ?? _serverDelay;
+    attempt.phase = ConnectionAttemptPhase.backoff;
+    _retryAt = now.add(wait);
+    _recoveryRetryAfterTimer?.cancel();
+    _recoveryRetryAfterTimer = Timer(wait, () {
+      _serverRetryAt = null;
+      _startRecovery(attempt);
+    });
+  }
+
+  Future<void> _startRecovery(ConnectionAttempt attempt) async {
+    if (!identical(attempt, _connectionAttempt) || !attempt.active) return;
+    if (chat.isBackground) {
+      _cancelAttempt(TransportRecoveryResult.cancelled);
+      return;
+    }
+    _retryAt = null;
+    attempt.phase = ConnectionAttemptPhase.preparing;
+    final socket = _socketIdentity;
+    try {
+      changeState(ReconnectingState(chat: chat));
+      notifyReconnectStarted();
+      await runZoned(() => _reconnect(
+          canStart: () => identical(attempt, _connectionAttempt) &&
+              attempt.active && !chat.isBackground && !_authRequired),
+          zoneValues: {
+            ConnectionManager._connectionAttemptZone: attempt,
+            ConnectionManager._socketZone: null,
+            ConnectionManager._sdkAttemptZone: null,
+            ConnectionManager._sdkReservationZone: null,
+          });
+    } catch (error) {
+      if (identical(attempt, _connectionAttempt) &&
+          identical(socket, _socketIdentity)) _failAttempt(error, attempt: attempt);
+    }
+  }
 }

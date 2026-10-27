@@ -291,15 +291,16 @@ class WebSocketClient {
   }
 
   void send(String data) {
-    if (!_isConnected) {
-      throw WebSocketFailedException();
+    if (!_isConnected || _webSocketChannel == null) {
+      throw WebSocketFailedException(sendStage: SendStage.beforeWrite);
     }
 
     runZonedGuarded(() {
       _webSocketChannel?.sink.add(data);
     }, (e, s) {
       sbLog.e(StackTrace.current, 'e: $e');
-      throw WebSocketFailedException(message: e.toString());
+      throw WebSocketFailedException(message: e.toString(),
+          sendStage: SendStage.afterWrite);
     });
   }
 
