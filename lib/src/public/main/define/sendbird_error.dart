@@ -64,6 +64,7 @@ class SendbirdError {
   static int passedInvalidAccessToken = 800500;
   static int sessionKeyRefreshSucceeded = 800501;
   static int sessionKeyRefreshFailed = 800502;
+  static int sessionRefreshTimeout = 800503;
   static int invalidCollectionDisposed = 800600;
 
   // WS Errors

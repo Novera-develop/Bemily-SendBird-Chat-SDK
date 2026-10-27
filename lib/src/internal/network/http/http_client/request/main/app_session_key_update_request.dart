@@ -9,6 +9,9 @@ class AppSessionKeyUpdateRequest extends ApiRequest {
   @override
   HttpMethod get method => HttpMethod.post;
 
+  @override
+  bool get refreshesSessionKey => true;
+
   AppSessionKeyUpdateRequest(
     Chat chat, {
     required String appId,

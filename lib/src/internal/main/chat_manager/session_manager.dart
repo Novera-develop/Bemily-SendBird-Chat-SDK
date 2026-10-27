@@ -41,6 +41,9 @@ class _SessionRefresh {
   _SessionRefresh(this.ownsSession);
   final bool Function() ownsSession;
   bool updating = false;
+  bool restartTransport = false;
+  bool credentialsTimedOut = false;
+  Timer? renotifyTimer;
   final completers = <Completer<void>>[];
 }
 
@@ -50,6 +53,12 @@ class SessionManager {
 
   static const _keyField = 'key';
   static const _newKeyField = 'new_key';
+  // The transport attempt owns its own deadline; a waiter it started outlives
+  // that deadline so the two never expire at the same instant.
+  static const _transportAttemptOwnerMargin = Duration(seconds: 1);
+  // After the credential wait expires, the requester is notified again once
+  // this cooldown passes so an app that dropped the first one can answer.
+  static const _credentialRenotifyCooldown = Duration(seconds: 30);
   _SessionRefresh? _refresh;
   Object _keyWriteIdentity = Object();
 
@@ -133,11 +142,12 @@ class SessionManager {
       _AccessTokenRequesterImpl(sessionManager: this, refresh: _beginRefresh());
 
   void _discardRefresh(_SessionRefresh refresh) {
+    refresh.renotifyTimer?.cancel();
     _flushUpdateSessionCompleterList(refresh, e: ConnectionCanceledException());
     if (identical(refresh, _refresh)) _refresh = null;
   }
 
-  Future<void> updateSessionKey() {
+  Future<void> updateSessionKey({bool restartTransport = false}) {
     sbLog.d(StackTrace.current);
     final requiresCredentials =
         _chat.connectionManager.getConnectionAttempt().authRequired;
@@ -146,6 +156,10 @@ class SessionManager {
       return Future.error(SessionKeyRefreshFailedException());
     }
     final refresh = _beginRefresh();
+    if (requiresCredentials && refresh.credentialsTimedOut && !refresh.updating) {
+      return Future.error(SessionRefreshTimeoutException());
+    }
+    refresh.restartTransport = refresh.restartTransport || restartTransport;
     final completer = Completer<void>();
     refresh.completers.add(completer);
     if (!refresh.updating && !requiresCredentials) {
@@ -153,7 +167,42 @@ class SessionManager {
       setSessionKey(null);
       _updateSessionKey(refresh);
     }
-    return completer.future;
+    final deadline = _chat.chatContext.options.reconnectAttemptDeadline +
+        (restartTransport ? _transportAttemptOwnerMargin : Duration.zero);
+    return completer.future.timeout(
+      deadline,
+      onTimeout: () {
+        refresh.completers.remove(completer);
+        _refresh?.completers.remove(completer);
+        if (requiresCredentials) _markCredentialsTimedOut(refresh);
+        throw SessionRefreshTimeoutException();
+      },
+    );
+  }
+
+  void _markCredentialsTimedOut(_SessionRefresh refresh) {
+    refresh.credentialsTimedOut = true;
+    refresh.renotifyTimer?.cancel();
+    refresh.renotifyTimer = Timer(_credentialRenotifyCooldown,
+        () => _renotifyCredentials(refresh));
+  }
+
+  void _renotifyCredentials(_SessionRefresh refresh) {
+    refresh.renotifyTimer?.cancel();
+    refresh.renotifyTimer = null;
+    if (!refresh.credentialsTimedOut || refresh.updating || !_isCurrent(refresh)) return;
+    // Stay pending while in background; foreground re-notifies once.
+    if (_chat.isBackground) return;
+    refresh.credentialsTimedOut = false;
+    _chat.eventManager.notifyAccessTokenRequired();
+  }
+
+  /// Asks the app for credentials again when a previous wait already expired.
+  /// Called when the SDK is nudged to reconnect (foreground, network change).
+  void renotifyExpiredCredentials() {
+    final refresh = _refresh;
+    if (refresh == null || !refresh.credentialsTimedOut) return;
+    _renotifyCredentials(refresh);
   }
 
   Future<void> _updateSessionKey(_SessionRefresh refresh) async {
@@ -191,11 +240,30 @@ class SessionManager {
       } else {
         _flushUpdateSessionCompleterList(refresh, e: SessionKeyRefreshFailedException());
         _refresh = null;
-        final ownsTransition = _chat.connectionManager.requireAuthentication();
-        if (!ownsTransition()) return;
-        _chat.eventManager.notifySessionError(SessionKeyRefreshFailedException());
+        _handleRefreshFailure(error);
       }
     }
+  }
+
+  void _handleRefreshFailure(Object error) {
+    if (error is SendbirdException &&
+        (error.code == SendbirdError.accessTokenNotValid ||
+            error.code == SendbirdError.accessTokenRevoked ||
+            error.code == SendbirdError.userDeactivated ||
+            error.code == SendbirdError.userNotExist)) {
+      final ownsTransition = _chat.connectionManager.requireAuthentication();
+      if (!ownsTransition()) return;
+      if (error.code == SendbirdError.accessTokenRevoked) {
+        _chat.eventManager.notifySessionClosed();
+      } else {
+        _chat.eventManager.notifySessionError(
+            error.code == SendbirdError.accessTokenNotValid
+                ? InvalidAccessTokenException() : error);
+      }
+      return;
+    }
+    setSessionKey(null);
+    _chat.connectionManager.retryAfterTransientError(error);
   }
 
   void cleanUp() {
@@ -292,7 +360,8 @@ class SessionManager {
     }
     _refresh = null;
     if (_chat.chatContext.isChatConnected) {
-      await _chat.connectionManager.reconnectAfterSessionRefresh();
+      await _chat.connectionManager.reconnectAfterSessionRefresh(
+          restartTransport: refresh.restartTransport);
     }
   }
 
@@ -346,9 +415,7 @@ class SessionManager {
       sbLog.e(StackTrace.current, 'e: $e');
       _flushUpdateSessionCompleterList(operation, e: SessionKeyRefreshFailedException());
       _refresh = null;
-      final ownsTransition = _chat.connectionManager.requireAuthentication();
-      if (!ownsTransition()) return;
-      _chat.eventManager.notifySessionError(InvalidAccessTokenException());
+      _handleRefreshFailure(e);
     }
   }
 

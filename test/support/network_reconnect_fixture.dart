@@ -291,6 +291,8 @@ class _Sessions implements SessionManager {
   @override
   void cleanUp() {}
   @override
+  void renotifyExpiredCredentials() {}
+  @override
   Future<String?> getSessionKey() async {
     final pending = barrier;
     if (pending != null) return pending.future;

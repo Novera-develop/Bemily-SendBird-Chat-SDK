@@ -20,6 +20,7 @@ abstract class ApiRequest {
   ProgressHandler? progressHandler;
   bool isMultipart = false;
   bool isAuthenticateFeed = false;
+  bool get refreshesSessionKey => false;
 
   final Chat chat;
   String? userId;

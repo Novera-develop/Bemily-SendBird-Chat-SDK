@@ -225,6 +225,19 @@ class SessionKeyRefreshFailedException extends SendbirdException {
             code: SendbirdError.sessionKeyRefreshFailed);
 }
 
+/// SessionRefreshTimeoutException
+/// Thrown when a session refresh did not finish within the wait deadline.
+/// The refresh may still complete later, so this is a transient error and
+/// not a confirmed session failure (no session handler notification).
+class SessionRefreshTimeoutException extends SendbirdException {
+  final bool isTransientTransport = true;
+  SessionRefreshTimeoutException()
+      : super(
+            name: (SessionRefreshTimeoutException).toString(),
+            code: SendbirdError.sessionRefreshTimeout,
+            message: 'Session refresh timed out');
+}
+
 /// AccessTokenRevokedException
 class AccessTokenRevokedException extends SendbirdException {
   AccessTokenRevokedException()

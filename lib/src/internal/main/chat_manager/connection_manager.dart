@@ -47,8 +47,11 @@ class ConnectionManager {
   Object _authenticatedSessionIdentity = Object();
   Object get authenticatedSessionIdentity => _authenticatedSessionIdentity;
   bool _authRequired = false;
+  bool _retryWithoutSessionKey = false;
   bool _preserveRecoverySession = false;
+  bool _retryBudgetExhausted = false;
   Completer<TransportRecoveryResult>? _recovery;
+  Completer<User>? _refreshedLogin;
 
   final Chat chat;
   late WebSocketClient webSocketClient;
@@ -57,6 +60,8 @@ class ConnectionManager {
   static final _socketZone = Object();
   static final _sdkAttemptZone = Object();
   static final _sdkReservationZone = Object();
+  static final _budgetRenewalDeniedZone = Object();
+  static final _budgetRenewalGrantedZone = Object();
   SocketAttempt? _sdkAttempt;
   SocketAttempt? _sdkReservation;
   Object? _socketIdentity;
@@ -132,6 +137,7 @@ class ConnectionManager {
   }
 
   void replaceSessionOwner() {
+    _retryWithoutSessionKey = false;
     _authenticatedSessionIdentity = Object();
     chat.sessionManager.cleanUp();
   }
@@ -143,7 +149,10 @@ class ConnectionManager {
     _serverRetryAt = null;
     _finishAttempt();
     _authRequired = false;
+    _retryWithoutSessionKey = false;
     _preserveRecoverySession = false;
+    _refreshedLogin = null;
+    _retryBudgetExhausted = false;
     _completeRecovery(TransportRecoveryResult.authenticated);
   }
 
@@ -159,13 +168,59 @@ class ConnectionManager {
   bool Function() requireAuthentication() => _requireAuthentication();
   void failTransportAttempt(Object error) => _failAttempt(error);
   void sessionRefreshed() => _sessionRefreshed();
-  Future<bool> reconnectAfterSessionRefresh() {
-    final task = chat.chatContext.reconnectTask;
-    if (task != null && task.exceedRetryCount) {
-      chat.chatContext.reconnectTask = ReconnectTask(task.config);
+  void retryAfterTransientError(Object error) {
+    _authRequired = false;
+    _retryWithoutSessionKey = true;
+    _preserveRecoverySession = true;
+    if (error is RateLimitExceededException && error.retryAfter != null &&
+        error.retryAfter! > _serverDelay) {
+      recordRetryAfter(error.retryAfter!);
     }
-    return runZoned(
-      () => reconnect(reset: true), zoneValues: {
+    runZoned(() => _failAttempt(error), zoneValues: {
+      _connectionAttemptZone: null,
+      _socketZone: null,
+      _sdkAttemptZone: null,
+      _sdkReservationZone: null,
+    });
+  }
+  Future<bool> reconnectAfterSessionRefresh({bool restartTransport = false}) {
+    if (_retryBudgetExhausted) return Future.value(false);
+    return runZoned(() async {
+      if (!restartTransport && _scheduledReconnect != null) return true;
+      if (!restartTransport) {
+        if (hasAuthenticatedTransport) return true;
+        return reconnect(reset: true);
+      }
+      if (_authRequired || chat.chatContext.currentUserId == null) return false;
+      if (chat.isBackground) {
+        _failAttempt(ConnectionCanceledException());
+        return false;
+      }
+      _cancelReconnectTimers();
+      _recoveryRetryAfterTimer?.cancel();
+      _recoveryRetryAfterTimer = null;
+      chat.commandManager.clearCompleterMap();
+      chat.commandManager.cancelAckTimers();
+      _replaceTransport();
+      final attempt = _connectionAttempt;
+      final login = chat.chatContext.loginCompleter;
+      if (login != null && !login.isCompleted) _refreshedLogin = login;
+      if (attempt != null) {
+        if (_serverDelay > Duration.zero) {
+          _waitForRecoveryRetryAfter(attempt);
+        } else {
+          await _startRecovery(attempt);
+        }
+        return true;
+      }
+      if (login != null && !login.isCompleted) {
+        await _runBoundedReconnect(() => _reconnect(
+            canStart: () => _isAttemptCurrent && !chat.isBackground &&
+                !_authRequired && identical(login, chat.chatContext.loginCompleter)));
+        return true;
+      }
+      return doReconnect(reset: !_retryWithoutSessionKey, foregroundOnly: true);
+    }, zoneValues: {
         _connectionAttemptZone: null,
         _socketZone: null,
         _sdkAttemptZone: null,
@@ -301,6 +356,8 @@ class ConnectionManager {
     }
     _authRequired = false;
     _preserveRecoverySession = false;
+    _retryWithoutSessionKey = false;
+    _retryBudgetExhausted = false;
     return await _currentState.connect(
       userId,
       nickname: nickname,
@@ -315,7 +372,11 @@ class ConnectionManager {
   }
 
   Future<bool> reconnect({required bool reset}) async {
-    return await _currentState.reconnect(reset: reset);
+    if (Zone.current[_budgetRenewalGrantedZone] == true) {
+      return await _currentState.reconnect(reset: reset);
+    }
+    return await runZoned(() => _currentState.reconnect(reset: reset),
+        zoneValues: {_budgetRenewalDeniedZone: true});
   }
 
   /// Reconnects after a network interface change (e.g., Wi-Fi ↔ cellular).
@@ -364,11 +425,17 @@ class ConnectionManager {
   }
 
   Future<void> enterBackground() async {
+    if (chat.chatContext.currentUser != null &&
+        chat.chatContext.sessionKey == null && _connectionAttempt != null) {
+      _preserveRecoverySession = true;
+      _retryWithoutSessionKey = true;
+    }
     _cancelAttempt(TransportRecoveryResult.cancelled);
     return await _currentState.enterBackground();
   }
 
   Future<void> enterForeground() async {
+    if (_authRequired) chat.sessionManager.renotifyExpiredCredentials();
     return await _currentState.enterForeground();
   }
 
@@ -392,8 +459,12 @@ class ConnectionManager {
 
     if (fromWebSocket) {
       chat.chatContext
-        ..wsHost = wsHost ?? chat.chatContext.wsHost ?? _getDefaultWsHost()
-        ..loginCompleter = Completer();
+        ..wsHost = wsHost ?? chat.chatContext.wsHost ?? _getDefaultWsHost();
+      final preserved = chat.chatContext.loginCompleter;
+      if (preserved == null || preserved.isCompleted ||
+          !identical(preserved, _refreshedLogin)) {
+        chat.chatContext.loginCompleter = Completer();
+      }
     }
   }
 
@@ -501,6 +572,8 @@ class ConnectionManager {
       _authRequired = false;
       _serverRetryAt = null;
       _preserveRecoverySession = false;
+      _retryBudgetExhausted = false;
+      _refreshedLogin = null;
     }
     socketTracker.invalidateConnection();
     if (logout || clear) {
@@ -599,7 +672,8 @@ class ConnectionManager {
         !isReconnecting() &&
         timeForDelayedConnectingState == null) {
       sbLog.i(StackTrace.current, 'reconnect()');
-      chat.connectionManager.reconnect(reset: true); // Check
+      runZoned(() => chat.connectionManager.reconnect(reset: true),
+          zoneValues: {_budgetRenewalGrantedZone: true}); // Check
     } else {
       if (isReconnecting() && timeForDelayedConnectingState == null) {
         notifyReconnectFailed();
@@ -628,6 +702,7 @@ class ConnectionManager {
     bool foregroundOnly = false,
     bool reset = false,
     bool isDelayedConnecting = false,
+    bool restartWithoutLogin = false,
   }) async {
     if (_authRequired || (foregroundOnly && chat.isBackground)) return false;
     if (_recovery != null) return true;
@@ -639,6 +714,9 @@ class ConnectionManager {
         webSocketClient.isConnected()) return true;
     final socket = _socketIdentity;
     if (!isCallbackCurrent(socket)) return false;
+    if (reset && Zone.current[_budgetRenewalDeniedZone] != true) {
+      _resetExhaustedRetryBudget(judgeTask: !_hasPendingAttempt);
+    }
     sbLog.i(StackTrace.current,
         'reset: $reset, isDelayedConnecting: $isDelayedConnecting');
 
@@ -647,24 +725,39 @@ class ConnectionManager {
       doNotCallReconnectStartedEvent = true;
     }
 
+    final task = chat.chatContext.reconnectTask;
+    if (task == null || task.exceedRetryCount) {
+      sbLog.w(StackTrace.current, 'exceedRetryCount and hasRetriedLastChance');
+      if (task != null) {
+        _preserveRecoverySession = true;
+        _retryWithoutSessionKey = true;
+        _cancelAttempt(TransportRecoveryResult.cancelled);
+        _replaceTransport();
+        _failPendingLogin(ConnectionCanceledException());
+        changeState(DisconnectedState(chat: chat));
+        _retryBudgetExhausted = true;
+        notifyReconnectFailed();
+        return false;
+      }
+      disconnect(logout: false);
+      return false;
+    }
+
     if (chat.chatContext.currentUser == null &&
         chat.chatContext.sessionKey == null &&
         chat.chatContext.currentUserId != null) {
       isDelayedConnecting = true;
-    } else if (chat.chatContext.currentUser == null ||
-        chat.chatContext.sessionKey == null) {
+    } else if ((chat.chatContext.currentUser == null && !restartWithoutLogin &&
+        (_refreshedLogin == null ||
+            !identical(_refreshedLogin, chat.chatContext.loginCompleter))) ||
+        (chat.chatContext.sessionKey == null && !_retryWithoutSessionKey)) {
+      if (chat.chatContext.currentUser != null &&
+          chat.chatContext.sessionKey == null) {
+        _preserveRecoverySession = true;
+        _retryWithoutSessionKey = true;
+      }
       changeState(DisconnectedState(chat: chat));
-      return false;
-    }
-
-    var task = chat.chatContext.reconnectTask;
-    if (_preserveRecoverySession && task != null && task.exceedRetryCount) {
-      task = ReconnectTask(task.config);
-      chat.chatContext.reconnectTask = task;
-    }
-    if (task == null || (task.exceedRetryCount && task.hasRetriedLastChance)) {
-      sbLog.w(StackTrace.current, 'exceedRetryCount and hasRetriedLastChance');
-      disconnect(logout: task != null && !_preserveRecoverySession);
+      notifyReconnectFailed();
       return false;
     }
 
@@ -692,7 +785,8 @@ class ConnectionManager {
           '[Timer() => RUN] ${chat.chatContext.reconnectTask?.backOffPeriod}sec, ${chat.chatContext.reconnectTask?.retryCount}/${chat.chatContext.reconnectTask?.config.maximumRetryCount}',
         );
 
-        if (chat.chatContext.reconnectTask?.retryCount == 1) {
+        if (chat.chatContext.reconnectTask?.retryCount == 1 ||
+            !_reconnectNotificationPending) {
           if (!doNotCallReconnectStartedEvent) {
             await chat.eventDispatcher.onReconnecting();
             if (!canStart() || !_isSocketStartCurrent(socket)) return;

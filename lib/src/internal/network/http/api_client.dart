@@ -23,11 +23,13 @@ class ApiClient {
     required ChatContext chatContext,
     required SessionManager sessionManager,
     StatManager? statManager,
+    http.Client? client,
   })  : _statManager = statManager,
         _httpClient = HttpClient(
           chatContext: chatContext,
           sessionManager: sessionManager,
           statManager: statManager,
+          client: client,
         );
 
   void cleanUp() {
@@ -51,6 +53,8 @@ class ApiClient {
       queryParams: request.queryParams,
     );
 
+    final allowRefresh = !request.refreshesSessionKey;
+
     try {
       // inject current user id if field is empty when only needs
       // need to clarify the condition
@@ -68,6 +72,7 @@ class ApiClient {
             uri: uri,
             queryParams: request.queryParams,
             headers: request.headers,
+            allowSessionKeyRefresh: allowRefresh,
           );
           break;
 
@@ -79,6 +84,7 @@ class ApiClient {
               body: request.body,
               headers: request.headers,
               isAuthenticateFeed: request.isAuthenticateFeed,
+              allowSessionKeyRefresh: allowRefresh,
             );
           } else {
             json = await _httpClient.requestMultipart(
@@ -99,6 +105,7 @@ class ApiClient {
               queryParams: request.queryParams,
               body: request.body,
               headers: request.headers,
+              allowSessionKeyRefresh: allowRefresh,
             );
           } else {
             json = await _httpClient.requestMultipart(
@@ -118,6 +125,7 @@ class ApiClient {
             queryParams: request.queryParams,
             body: request.body,
             headers: request.headers,
+            allowSessionKeyRefresh: allowRefresh,
           );
           break;
       }

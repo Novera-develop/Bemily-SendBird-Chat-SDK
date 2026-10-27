@@ -609,6 +609,11 @@ void _registerTransportRecoveryTests() {
 
   testWidgets('N5 exhausted retry budget cannot logout on recovery timeout', (tester) async {
     final fixture = _Fixture();
+    final connectionHandler = _Nf5ConnectionHandler();
+    final sessionHandler = _Nf2SessionHandler();
+    fixture.chat.eventManager
+      ..addConnectionHandler(_appId, connectionHandler)
+      ..setSessionHandler(sessionHandler);
     fixture.chat.chatContext.reconnectTask!.config.maximumRetryCount = _one;
     fixture.chat.chatContext.reconnectTask!.increaseRetryCount(reset: true);
     final recovery = fixture.connection.recoverTransport(deadline: _attemptBudget);
@@ -616,11 +621,17 @@ void _registerTransportRecoveryTests() {
     await tester.pump(_attemptBudget);
     expect(await recovery, TransportRecoveryResult.timeout);
     expect(fixture.chat.chatContext.currentUserId, _userId);
-    expect(fixture.connection.getConnectionAttempt().phase, ConnectionAttemptPhase.backoff);
-    expect(await fixture.connection.advanceReconnect(), isTrue);
-    await _flush(tester);
-    await fixture.sockets.last.login();
-    expect(fixture.connection.isConnected(), isTrue);
+    expect(fixture.chat.chatContext.currentUser, isNotNull);
+    expect(fixture.connection.getConnectionAttempt().phase, ConnectionAttemptPhase.idle);
+    expect(fixture.connection.getConnectionAttempt().retryAt, isNull);
+    expect(fixture.connection.getConnectionAttempt().authRequired, isFalse);
+    expect(fixture.connection.isDisconnected(), isTrue);
+    expect(sessionHandler.events, isEmpty);
+    expect(connectionHandler.events, [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+    expect(fixture.connection.reconnectNotificationPending, isFalse);
+    final starts = fixture.starts;
+    await tester.pump(_attemptBudget);
+    expect(fixture.starts, starts);
     fixture.dispose();
   });
 
@@ -919,8 +930,17 @@ void _registerNf2RaceTests() {
       await _flush(tester);
       await done;
       expect(fixture.chat.chatContext.currentUser, same(user));
-      expect(handler.events, [success ? _nf2SessionRefreshed : _nf2SessionError]);
-      expect(fixture.connection.getConnectionAttempt().authRequired, !success);
+      expect(handler.events, [if (success) _nf2SessionRefreshed]);
+      expect(fixture.connection.getConnectionAttempt().authRequired, isFalse);
+      if (!success) {
+        expect(fixture.connection.getConnectionAttempt().retryAt, isNotNull);
+        await fixture.connection.advanceReconnect();
+        await _flush(tester);
+        await fixture.sockets.last.login();
+        await _flush(tester);
+        expect(fixture.connection.isConnected(), isTrue);
+        expect(handler.events, isEmpty);
+      }
       if (success) {
         expect(fixture.chat.chatContext.sessionKey, _nextSessionKey);
         await fixture.sockets.last.login();
@@ -1379,17 +1399,25 @@ void _registerNf4RaceTests() {
         _errorField: true, _codeField: code,
       })}');
       await _flush(tester);
+      if (code == SendbirdError.sessionKeyExpired) {
+        expect(handler.events, isEmpty);
+        expect(api.requests, _one);
+        expect(fixture.connection.getConnectionAttempt().authRequired, isFalse);
+        api.response.completeError(SendbirdException(code: SendbirdError.accessTokenNotValid));
+        await _flush(tester);
+      }
       expect(await recovery, TransportRecoveryResult.authRequired);
       expect(handler.requester, isNotNull);
       var completed = false;
       final waiting = sessions.updateSessionKey().then((_) { completed = true; });
       await _flush(tester);
-      expect(api.requests, _none);
+      final initialRequests = code == SendbirdError.sessionKeyExpired ? _one : _none;
+      expect(api.requests, initialRequests);
       expect(completed, isFalse);
       final refresh = handler.requester!.onSuccess(_nextAccessToken);
       await _flush(tester);
-      expect(api.requests, _one);
-      api.response.complete({_sessionKeyField: _nextSessionKey});
+      expect(api.requests, initialRequests + _one);
+      api.responses.last.complete({_sessionKeyField: _nextSessionKey});
       await _flush(tester);
       await Future.wait([waiting, refresh]);
       expect(completed, isTrue);

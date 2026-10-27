@@ -29,6 +29,10 @@ enum HttpMethod {
 
 class HttpClient {
   final apiTimeoutSec = 10; // Check
+  static const minRequestDeadline = Duration(seconds: 45);
+  static const _requestDeadlineMargin = Duration(seconds: 5);
+  static const _requestAttemptsPerDeadline = 2;
+  static final _deadlineScopeKey = Object();
   final Map<String, MultipartRequest> uploadingMultipartRequests = {};
   StreamController? errorStreamController =
       StreamController<SendbirdException>.broadcast(sync: true);
@@ -43,10 +47,13 @@ class HttpClient {
     required ChatContext chatContext,
     required SessionManager sessionManager,
     StatManager? statManager,
+    http.Client? client,
   })  : _chatContext = chatContext,
         _sessionManager = sessionManager,
         _statManager = statManager {
-    if (kIsWeb) {
+    if (client != null) {
+      _client = client;
+    } else if (kIsWeb) {
       _client = http.Client();
     } else {
       _client = IOClient(io.HttpClient());
@@ -132,7 +139,18 @@ class HttpClient {
     required Uri uri,
     Map<String, dynamic>? queryParams,
     Map<String, String>? headers,
-  }) async {
+    bool allowSessionKeyRefresh = true,
+  }) {
+    return _withDeadline(
+        () => _get(uri, queryParams, headers, allowSessionKeyRefresh));
+  }
+
+  Future<dynamic> _get(
+    Uri uri,
+    Map<String, dynamic>? queryParams,
+    Map<String, String>? headers,
+    bool allowSessionKeyRefresh,
+  ) async {
     final allHeaders = _commonHeaders();
     allHeaders.addAll(headers ?? {});
 
@@ -144,7 +162,7 @@ class HttpClient {
         () => '\n-[url] $uri\n-[headers] ${jsonEncoder.convert(allHeaders)}\n-[queryParams] ${jsonEncoder.convert(queryParams)}');
 
     http.Response res = await _send(HttpMethod.get, uri, headers: allHeaders);
-    if (await _checkSessionKeyExpired(res)) {
+    if (await _checkSessionKeyExpired(res, allowSessionKeyRefresh)) {
       allHeaders.addAll(_commonHeaders()); // Apply updated sessionKey
       res = await _send(HttpMethod.get, uri, headers: allHeaders);
     }
@@ -157,7 +175,20 @@ class HttpClient {
     Map<String, dynamic> body = const {},
     Map<String, String> headers = const {},
     bool? isAuthenticateFeed,
-  }) async {
+    bool allowSessionKeyRefresh = true,
+  }) {
+    return _withDeadline(() => _post(uri, queryParams, body, headers,
+        isAuthenticateFeed, allowSessionKeyRefresh));
+  }
+
+  Future<dynamic> _post(
+    Uri uri,
+    Map<String, dynamic> queryParams,
+    Map<String, dynamic> body,
+    Map<String, String> headers,
+    bool? isAuthenticateFeed,
+    bool allowSessionKeyRefresh,
+  ) async {
     final allHeaders = _commonHeaders(isAuthenticateFeed: isAuthenticateFeed);
     allHeaders.addAll(headers);
 
@@ -170,7 +201,7 @@ class HttpClient {
 
     http.Response res =
         await _send(HttpMethod.post, uri, headers: allHeaders, body: body);
-    if (await _checkSessionKeyExpired(res)) {
+    if (await _checkSessionKeyExpired(res, allowSessionKeyRefresh)) {
       allHeaders.addAll(_commonHeaders()); // Apply updated sessionKey
       res = await _send(HttpMethod.post, uri, headers: allHeaders, body: body);
     }
@@ -182,7 +213,19 @@ class HttpClient {
     Map<String, dynamic> queryParams = const {},
     Map<String, dynamic> body = const {},
     Map<String, String> headers = const {},
-  }) async {
+    bool allowSessionKeyRefresh = true,
+  }) {
+    return _withDeadline(
+        () => _put(uri, queryParams, body, headers, allowSessionKeyRefresh));
+  }
+
+  Future<dynamic> _put(
+    Uri uri,
+    Map<String, dynamic> queryParams,
+    Map<String, dynamic> body,
+    Map<String, String> headers,
+    bool allowSessionKeyRefresh,
+  ) async {
     final allHeaders = _commonHeaders();
     allHeaders.addAll(headers);
 
@@ -195,7 +238,7 @@ class HttpClient {
 
     http.Response res =
         await _send(HttpMethod.put, uri, headers: allHeaders, body: body);
-    if (await _checkSessionKeyExpired(res)) {
+    if (await _checkSessionKeyExpired(res, allowSessionKeyRefresh)) {
       allHeaders.addAll(_commonHeaders()); // Apply updated sessionKey
       res = await _send(HttpMethod.put, uri, headers: allHeaders, body: body);
     }
@@ -207,7 +250,19 @@ class HttpClient {
     Map<String, dynamic> queryParams = const {},
     Map<String, dynamic> body = const {},
     Map<String, String> headers = const {},
-  }) async {
+    bool allowSessionKeyRefresh = true,
+  }) {
+    return _withDeadline(
+        () => _delete(uri, queryParams, body, headers, allowSessionKeyRefresh));
+  }
+
+  Future<dynamic> _delete(
+    Uri uri,
+    Map<String, dynamic> queryParams,
+    Map<String, dynamic> body,
+    Map<String, String> headers,
+    bool allowSessionKeyRefresh,
+  ) async {
     final allHeaders = _commonHeaders();
     allHeaders.addAll(headers);
 
@@ -220,7 +275,7 @@ class HttpClient {
 
     http.Response res =
         await _send(HttpMethod.delete, uri, headers: allHeaders, body: body);
-    if (await _checkSessionKeyExpired(res)) {
+    if (await _checkSessionKeyExpired(res, allowSessionKeyRefresh)) {
       allHeaders.addAll(_commonHeaders()); // Apply updated sessionKey
       res =
           await _send(HttpMethod.delete, uri, headers: allHeaders, body: body);
@@ -468,7 +523,30 @@ class HttpClient {
     }
   }
 
-  Future<bool> _checkSessionKeyExpired(http.Response response) async {
+  /// Covers two sends and one session refresh wait, never below [minRequestDeadline].
+  Duration get requestDeadline {
+    final derived = _chatContext.options.reconnectAttemptDeadline +
+        Duration(seconds: apiTimeoutSec * _requestAttemptsPerDeadline) +
+        _requestDeadlineMargin;
+    return derived > minRequestDeadline ? derived : minRequestDeadline;
+  }
+
+  Future<T> _withDeadline<T>(Future<T> Function() request) {
+    final deadline = requestDeadline;
+    final scope = _DeadlineScope();
+    return runZoned(
+      () => request().timeout(deadline, onTimeout: () {
+        scope.expired = true;
+        sbLog.e(StackTrace.current,
+            '[TimeoutException] requestDeadline: $deadline');
+        throw TimeoutException('API request deadline exceeded', deadline);
+      }),
+      zoneValues: {_deadlineScopeKey: scope},
+    );
+  }
+
+  Future<bool> _checkSessionKeyExpired(http.Response response,
+      [bool allowSessionKeyRefresh = true]) async {
     dynamic body;
 
     try {
@@ -483,9 +561,16 @@ class HttpClient {
           SendbirdException(message: body['message'], code: body['code']);
       errorStreamController?.sink.add(err);
 
-      if (err.code == SendbirdError.sessionKeyExpired) {
+      if (allowSessionKeyRefresh &&
+          err.code == SendbirdError.sessionKeyExpired) {
         try {
           await _sessionManager.updateSessionKey();
+          // The caller already gave up; never resend its request afterwards.
+          final scope = Zone.current[_deadlineScopeKey] as _DeadlineScope?;
+          if (scope != null && scope.expired) {
+            throw TimeoutException(
+                'API request deadline exceeded', requestDeadline);
+          }
           return true;
         } catch (e) {
           sbLog.e(StackTrace.current, 'e: $e');
@@ -532,4 +617,8 @@ class HttpClient {
     });
     return result;
   }
+}
+
+class _DeadlineScope {
+  bool expired = false;
 }

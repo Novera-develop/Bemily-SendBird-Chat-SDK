@@ -1059,12 +1059,26 @@ class CommandManager {
     sbLog.e(StackTrace.current,
         'cmd: ${cmd.cmd}, errorMessage: ${cmd.errorMessage ?? ''}');
 
-    final authenticationError = cmd.errorCode == SendbirdError.sessionKeyExpired ||
-        cmd.errorCode == SendbirdError.accessTokenRevoked ||
-        cmd.errorCode == SendbirdError.accessTokenNotValid ||
+    if (cmd.errorCode == SendbirdError.sessionKeyExpired) {
+      final connection = _chat.connectionManager;
+      final owner = connection.authenticatedSessionIdentity;
+      try {
+        await _chat.sessionManager.updateSessionKey(restartTransport: true);
+      } on ConnectionCanceledException {
+        if (identical(owner, connection.authenticatedSessionIdentity)) rethrow;
+      }
+      return;
+    }
+    if (cmd.errorCode == SendbirdError.nonAuthorized ||
         cmd.errorCode == SendbirdError.tokenExpired ||
-        cmd.errorCode == SendbirdError.nonAuthorized ||
-        cmd.errorCode == SendbirdError.authUnknownError ||
+        cmd.errorCode == SendbirdError.authUnknownError) {
+      _chat.connectionManager.retryAfterTransientError(SendbirdException(
+          code: cmd.errorCode, message: cmd.errorMessage,
+          sendStage: SendStage.afterWrite));
+      return;
+    }
+    final authenticationError = cmd.errorCode == SendbirdError.accessTokenRevoked ||
+        cmd.errorCode == SendbirdError.accessTokenNotValid ||
         cmd.errorCode == SendbirdError.userDeactivated ||
         cmd.errorCode == SendbirdError.userNotExist;
     if (authenticationError) {
@@ -1075,14 +1089,11 @@ class CommandManager {
       if (login != null && !login.isCompleted) login.completeError(exception);
       final ownsTransition = _chat.connectionManager.requireAuthentication();
       if (!ownsTransition()) return;
-      if (cmd.errorCode == SendbirdError.sessionKeyExpired ||
-          cmd.errorCode == SendbirdError.accessTokenNotValid) {
+      if (cmd.errorCode == SendbirdError.accessTokenNotValid) {
         _chat.eventManager.notifyAccessTokenRequired();
       } else if (cmd.errorCode == SendbirdError.accessTokenRevoked) {
         _chat.eventManager.notifySessionClosed();
       } else {
-        _chat.eventManager.notifyAccessTokenRequired();
-        if (!ownsTransition()) return;
         _chat.eventManager.notifySessionError(exception);
       }
       return;

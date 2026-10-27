@@ -47,6 +47,8 @@ class _Nf5Harness {
 }
 
 void _registerNf5Tests() {
+  _registerU5Tests();
+  _registerU5gTests();
   _registerNf5Matrix();
   _registerNf5ClearStages();
   _registerNf5CancellationContracts();
@@ -386,7 +388,6 @@ void _registerNf5Matrix() {
         final authBeforeHttp = connection.getConnectionAttempt().authRequired;
         if (event == _Nf5Event.lateFailure) {
           h.api.response.completeError(NetworkErrorException());
-          if (!ownerChanged) expectedEvents.add(_nf2SessionError);
         } else {
           h.api.response.complete({_sessionKeyField: _nf2StaleKey});
           if (!ownerChanged) expectedEvents.add(_nf2SessionRefreshed);
@@ -408,7 +409,16 @@ void _registerNf5Matrix() {
             expect(h.handler.events, expectedEvents);
           }
         } else if (event == _Nf5Event.lateFailure) {
-          expect(connection.getConnectionAttempt().authRequired, isTrue);
+          expect(connection.getConnectionAttempt().authRequired, isFalse);
+          expect(connection.getConnectionAttempt().retryAt,
+              row == _Nf5Row.backoff ? isNull : isNotNull);
+          if (row == _Nf5Row.backoff) {
+            expect(context.currentUserId, _userId);
+            expect(context.currentUser, isNotNull);
+            expect(connection.isDisconnected(), isTrue);
+            expect(h.connectionHandler.events.where((event) =>
+                event == _nf5ReconnectFailed).length, _one);
+          }
           if (row != _Nf5Row.expr) expect(failures, [isA<SessionKeyRefreshFailedException>()]);
         } else {
           expect(context.sessionKey, _nf2StaleKey);
@@ -447,6 +457,11 @@ void _registerNf5Matrix() {
         if (connection.getConnectionAttempt().authRequired == false) {
           await tester.pump(_nf3BusyWait);
           await _flush(tester);
+          if (event == _Nf5Event.lateFailure && !ownerChanged &&
+              row != _Nf5Row.backoff) {
+            await connection.advanceReconnect();
+            await _flush(tester);
+          }
           if (connection.webSocketClient.isConnected()) {
             await h.packet(_loginCommand, {
               ..._loginPayload, _userIdField: context.currentUserId,
@@ -2512,6 +2527,13 @@ void _registerNf10Tests() {
                   await h.packet(_loginCommand, {_errorField: true,
                     _codeField: cause == _Nf10Failure.sessionExpired ?
                       SendbirdError.sessionKeyExpired : SendbirdError.accessTokenNotValid});
+                  if (cause == _Nf10Failure.sessionExpired) {
+                    await _flush(tester);
+                    expect(h.handler.events, isEmpty);
+                    expect(calls, _none);
+                    h.api.response.completeError(
+                        SendbirdException(code: SendbirdError.accessTokenNotValid));
+                  }
                   break;
                 case _Nf10Failure.httpToken:
                   for (var index = _none; index < _two; index++) {
@@ -2544,7 +2566,8 @@ void _registerNf10Tests() {
               await _flush(tester);
               expect(h.handler.events, isEmpty);
               expect(h.handler.requester, isNull);
-              expect(h.api.requests, cause == _Nf10Failure.httpToken ? _one : _none);
+              expect(h.api.requests, cause == _Nf10Failure.httpToken ||
+                  cause == _Nf10Failure.sessionExpired ? _one : _none);
               expect(failures, isEmpty);
               if (cause == _Nf10Failure.httpToken) {
                 expect(refreshResults, isEmpty);
@@ -2654,18 +2677,24 @@ void _registerNf10Terminals() {
             break;
         }
         await _flush(tester);
-        expect(await recovery, TransportRecoveryResult.authRequired);
-        expect(latest, isNotNull);
-        expect(h.handler.events, isEmpty);
-        expect(failures, isEmpty);
-        final login = h.fixture.chat.chatContext.loginCompleter!;
-        await h.packet(_loginCommand, {..._loginPayload,
-          _userIdField: nextUser, _sessionKeyField: _nextSessionKey});
-        await _flush(tester);
-        expect(results.map((user) => user.userId), [nextUser]);
-        expect(authenticated, [true]);
-        expect(login.isCompleted, isTrue);
-        await latest;
+        if (_u5TransientTerminal(terminal)) {
+          expect(latest, isNull);
+          await _u5CompleteTransient(h, tester);
+          expect(await recovery, TransportRecoveryResult.authenticated);
+        } else {
+          expect(await recovery, TransportRecoveryResult.authRequired);
+          expect(latest, isNotNull);
+          expect(h.handler.events, isEmpty);
+          expect(failures, isEmpty);
+          final login = h.fixture.chat.chatContext.loginCompleter!;
+          await h.packet(_loginCommand, {..._loginPayload,
+            _userIdField: nextUser, _sessionKeyField: _nextSessionKey});
+          await _flush(tester);
+          expect(results.map((user) => user.userId), [nextUser]);
+          expect(authenticated, [true]);
+          expect(login.isCompleted, isTrue);
+          await latest;
+        }
         if (refresh != null) {
           await refresh;
           expect(refreshFailures, [isA<SessionKeyRefreshFailedException>()]);
@@ -3104,22 +3133,29 @@ void _registerNf11Terminals() {
                 break;
             }
             await _flush(tester);
+            if (_u5TransientTerminal(terminal)) {
+              expect(latest, isNull);
+              await _u5CompleteTransient(h, tester);
+            } else {
+              expect(latest, isNotNull);
+              expect(h.handler.events, isEmpty);
+              expect(failures, isEmpty);
+              final login = h.fixture.chat.chatContext.loginCompleter!;
+              await h.packet(_loginCommand, {..._loginPayload,
+                _userIdField: nextUser, _sessionKeyField: _nextSessionKey});
+              await _flush(tester);
+              expect(results.map((user) => user.userId), [nextUser]);
+              expect(authenticated, [true]);
+              expect(login.isCompleted, isTrue);
+              await latest;
+            }
             if (path == _Nf10Path.recovery) {
-              expect(recoveries, [TransportRecoveryResult.authRequired]);
+              expect(recoveries, [_u5TransientTerminal(terminal)
+                  ? TransportRecoveryResult.authenticated
+                  : TransportRecoveryResult.authRequired]);
             }
             await Future.wait(pending);
             if (previousLogin != null) expect(previousLogin.isCompleted, isTrue);
-            expect(latest, isNotNull);
-            expect(h.handler.events, isEmpty);
-            expect(failures, isEmpty);
-            final login = h.fixture.chat.chatContext.loginCompleter!;
-            await h.packet(_loginCommand, {..._loginPayload,
-              _userIdField: nextUser, _sessionKeyField: _nextSessionKey});
-            await _flush(tester);
-            expect(results.map((user) => user.userId), [nextUser]);
-            expect(authenticated, [true]);
-            expect(login.isCompleted, isTrue);
-            await latest;
             if (refresh != null) {
               await refresh;
               expect(refreshFailures, [isA<SessionKeyRefreshFailedException>()]);
@@ -3138,7 +3174,8 @@ void _registerNf11Terminals() {
               _sessionKeyField: _nf2StaleKey})}');
             await _flush(tester);
             expect(connection.connectionSnapshot.key, same(key));
-            expect(h.fixture.chat.chatContext.currentUserId, nextUser);
+            expect(h.fixture.chat.chatContext.currentUserId,
+                _u5TransientTerminal(terminal) ? _userId : nextUser);
             expect(h.fixture.chat.chatContext.sessionKey, _nextSessionKey);
             _nf6ExpectAuthenticated(h);
             _nf7ExpectNotifications(h);
@@ -3221,4 +3258,1492 @@ void _registerNf11Exhaustion() {
       });
     }
   }
+}
+
+
+bool _u5TransientTerminal(_Nf10Terminal terminal) =>
+    terminal == _Nf10Terminal.logiUnauthorized ||
+    terminal == _Nf10Terminal.httpNetwork;
+
+Future<void> _u5CompleteTransient(_Nf5Harness h, WidgetTester tester) async {
+  final connection = h.fixture.connection;
+  final starts = h.fixture.starts;
+  final sessionKey = h.fixture.chat.chatContext.sessionKey;
+  expect(h.handler.events, isEmpty);
+  expect(connection.getConnectionAttempt().authRequired, isFalse);
+  final retryAt = connection.getConnectionAttempt().retryAt;
+  expect(retryAt, isNotNull);
+  await tester.pump(retryAt!.difference(connection.now));
+  await _flush(tester);
+  expect(h.fixture.starts, starts + _one);
+  expect(h.fixture.sockets.last.loginSessionKey, sessionKey);
+  expect(h.fixture.sockets.last.isConnected(), isTrue);
+  expect(connection.hasAuthenticatedTransport, isFalse);
+  await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _nextSessionKey});
+  await _flush(tester);
+  expect(connection.hasAuthenticatedTransport, isTrue);
+  expect(h.handler.events, isEmpty);
+}
+
+
+const _u5TimeoutMessage = 'session refresh timed out';
+const _u5RefreshedKey = 'test-session-key-refreshed-u5b';
+const _u5InfiniteRetries = -1;
+const _u5Deadline = Duration(seconds: 10);
+const _u5ShortDeadline = Duration(seconds: 3);
+const _u5RetryAfter = Duration(seconds: 3);
+const _u5Tick = Duration(milliseconds: 1);
+final _u5TransientCodes = {
+  SendbirdError.nonAuthorized,
+  SendbirdError.tokenExpired,
+  SendbirdError.authUnknownError,
+};
+final _u5TerminalCodes = {
+  SendbirdError.accessTokenRevoked,
+  SendbirdError.userDeactivated,
+  SendbirdError.userNotExist,
+};
+enum _U5RestFailure { network, server, timeout, rateLimit, unauthorized,
+  expired, unknown, invalid, revoked, deactivated, missing }
+
+Object _u5RestError(_U5RestFailure failure) {
+  switch (failure) {
+    case _U5RestFailure.network: return NetworkErrorException();
+    case _U5RestFailure.server: return InternalServerException();
+    case _U5RestFailure.timeout: return TimeoutException(_u5TimeoutMessage);
+    case _U5RestFailure.rateLimit:
+      return RateLimitExceededException(retryAfter: _u5RetryAfter);
+    case _U5RestFailure.unauthorized:
+      return SendbirdException(code: SendbirdError.nonAuthorized);
+    case _U5RestFailure.expired:
+      return SendbirdException(code: SendbirdError.tokenExpired);
+    case _U5RestFailure.unknown:
+      return SendbirdException(code: SendbirdError.authUnknownError);
+    case _U5RestFailure.invalid:
+      return SendbirdException(code: SendbirdError.accessTokenNotValid);
+    case _U5RestFailure.revoked:
+      return SendbirdException(code: SendbirdError.accessTokenRevoked);
+    case _U5RestFailure.deactivated:
+      return SendbirdException(code: SendbirdError.userDeactivated);
+    case _U5RestFailure.missing:
+      return SendbirdException(code: SendbirdError.userNotExist);
+  }
+}
+
+void _registerU5Tests() {
+  _registerU5dTests();
+  _registerU5cTests();
+  _registerU5bTests();
+  for (final recovery in _hookModes) {
+    for (final correlated in _hookModes) {
+      for (final code in {..._u5TransientCodes, ..._u5TerminalCodes,
+          SendbirdError.accessTokenNotValid, SendbirdError.sessionKeyExpired}) {
+        testWidgets('U5 LOGI code=$code recovery=$recovery correlated=$correlated', (tester) async {
+          final h = _Nf5Harness(tester);
+          await h.login(tester);
+          final connection = h.fixture.connection;
+          final results = <TransportRecoveryResult>[];
+          Future<void>? pending;
+          if (recovery) {
+            pending = connection.recoverTransport(deadline: _u5Deadline)
+                .then<void>(results.add);
+            await _flush(tester);
+          }
+          final before = connection.getConnectionAttempt();
+          final oldSocket = h.fixture.sockets.last;
+          final starts = h.fixture.starts;
+          await h.packet(_loginCommand, {
+            if (correlated) _requestIdField: _ackRequestId,
+            _errorField: true, _codeField: code,
+          });
+          await _flush(tester);
+          if (_u5TransientCodes.contains(code)) {
+            expect(h.handler.events, isEmpty);
+            expect(connection.getConnectionAttempt().authRequired, isFalse);
+            expect(connection.getConnectionAttempt().phase, ConnectionAttemptPhase.backoff);
+            expect(connection.getConnectionAttempt().retryAt, isNotNull);
+            expect(results, isEmpty);
+            if (recovery) {
+              expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+              expect(connection.getConnectionAttempt().deadline, before.deadline);
+            }
+            final socket = connection.socketIdentity;
+            oldSocket.closed();
+            await _flush(tester);
+            expect(connection.socketIdentity, same(socket));
+            expect(await connection.advanceReconnect(), isTrue);
+            await _flush(tester);
+            await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _nextSessionKey});
+            await _flush(tester);
+            expect(connection.hasAuthenticatedTransport, isTrue);
+            expect(h.handler.events, isEmpty);
+            if (pending != null) {
+              await pending;
+              expect(results, [TransportRecoveryResult.authenticated]);
+            }
+          } else if (code == SendbirdError.sessionKeyExpired) {
+            expect(h.api.requests, _one);
+            expect(h.handler.events, isEmpty);
+            expect(connection.getConnectionAttempt().authRequired, isFalse);
+            h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+            await _flush(tester);
+            expect(h.handler.events, [_nf2SessionRefreshed]);
+            expect(h.fixture.starts, starts + _one);
+            expect(h.fixture.sockets.last, isNot(same(oldSocket)));
+            expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+            expect(connection.hasAuthenticatedTransport, isFalse);
+            if (recovery) {
+              expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+              expect(connection.getConnectionAttempt().deadline, before.deadline);
+            }
+            await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _u5RefreshedKey});
+            await _flush(tester);
+            expect(connection.hasAuthenticatedTransport, isTrue);
+            if (pending != null) {
+              await pending;
+              expect(results, [TransportRecoveryResult.authenticated]);
+            }
+          } else {
+            expect(connection.getConnectionAttempt().authRequired, isTrue);
+            expect(connection.getConnectionAttempt().retryAt, isNull);
+            expect(await connection.advanceReconnect(), isFalse);
+            if (code == SendbirdError.accessTokenNotValid) {
+              expect(h.handler.events, [_nf2SessionRequired]);
+              await h.handler.requester!.onFail();
+              await h.handler.requester!.onFail();
+              expect(h.handler.events, [_nf2SessionRequired, _nf2SessionError]);
+            } else {
+              expect(h.handler.events, [code == SendbirdError.accessTokenRevoked
+                  ? _nf2SessionClosed : _nf2SessionError]);
+            }
+            if (pending != null) {
+              await pending;
+              expect(results, [TransportRecoveryResult.authRequired]);
+            }
+          }
+        });
+      }
+    }
+  }
+  for (final requester in _hookModes) {
+    for (final recovery in requester ? [false] : _hookModes) {
+    for (final failure in _U5RestFailure.values) {
+      testWidgets('U5 refresh REST ${failure.name} requester=$requester recovery=$recovery', (tester) async {
+        final h = _Nf5Harness(tester);
+        await h.login(tester);
+        final connection = h.fixture.connection;
+        final errors = <Object>[];
+        final results = <TransportRecoveryResult>[];
+        Future<void>? transport;
+        if (recovery) {
+          transport = connection.recoverTransport(deadline: _u5Deadline)
+              .then<void>(results.add);
+          await _flush(tester);
+        }
+        final before = connection.getConnectionAttempt();
+        Future<void> pending;
+        if (requester) {
+          await h.packet(_loginCommand, {_errorField: true,
+            _codeField: SendbirdError.accessTokenNotValid});
+          await _flush(tester);
+          expect(h.handler.events, [_nf2SessionRequired]);
+          h.handler.events.clear();
+          pending = h.handler.requester!.onSuccess(_nextAccessToken);
+        } else {
+          pending = h.sessions.updateSessionKey().then<void>((_) {},
+              onError: (Object error) { errors.add(error); });
+        }
+        await _flush(tester);
+        final error = _u5RestError(failure);
+        h.api.response.completeError(error);
+        await _flush(tester);
+        if (failure == _U5RestFailure.invalid && !requester) {
+          expect(h.handler.events, [_nf2SessionRequired]);
+          await h.handler.requester!.onFail();
+          await h.handler.requester!.onFail();
+          expect(h.handler.events, [_nf2SessionRequired, _nf2SessionError]);
+        } else if (error is SendbirdException &&
+            (_u5TerminalCodes.contains(error.code) ||
+                error.code == SendbirdError.accessTokenNotValid)) {
+          expect(h.handler.events, [failure == _U5RestFailure.revoked
+              ? _nf2SessionClosed : _nf2SessionError]);
+        } else {
+          expect(h.handler.events, isEmpty);
+          expect(connection.getConnectionAttempt().authRequired, isFalse);
+          expect(connection.getConnectionAttempt().retryAt, isNotNull);
+          if (recovery) {
+            expect(results, isEmpty);
+            expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+            expect(connection.getConnectionAttempt().deadline, before.deadline);
+          }
+          if (failure == _U5RestFailure.rateLimit) {
+            expect(connection.getConnectionAttempt().retryAt,
+                connection.now.add(_u5RetryAfter));
+            expect(await connection.advanceReconnect(), isFalse);
+            final starts = h.fixture.starts;
+            await tester.pump(_u5RetryAfter - _u5Tick);
+            expect(h.fixture.starts, starts);
+            await tester.pump(_u5Tick);
+            await _flush(tester);
+          }
+          expect(await connection.advanceReconnect(), isTrue);
+          await _flush(tester);
+          expect(h.fixture.sockets.last.loginSessionKey, isNull);
+          if (requester) expect(h.fixture.sockets.last.loginAccessToken, _nextAccessToken);
+          await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _nextSessionKey});
+          await _flush(tester);
+          expect(connection.hasAuthenticatedTransport, isTrue);
+          expect(h.handler.events, isEmpty);
+        }
+        await pending;
+        if (!requester) expect(errors, [isA<SessionKeyRefreshFailedException>()]);
+        if (h.handler.events.isNotEmpty) {
+          expect(connection.getConnectionAttempt().authRequired, isTrue);
+          expect(connection.getConnectionAttempt().retryAt, isNull);
+        }
+        if (transport != null) {
+          await transport;
+          expect(results, [h.handler.events.isEmpty
+              ? TransportRecoveryResult.authenticated : TransportRecoveryResult.authRequired]);
+        }
+      });
+    }
+    }
+  }
+  for (final success in _hookModes) {
+    testWidgets('U5 expired key refresh cannot invalidate newer LOGI success=$success', (tester) async {
+      final h = _Nf5Harness(tester);
+      await h.login(tester);
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      expect(h.api.requests, _one);
+      await h.packet(_loginCommand, {_requestIdField: _ackRequestId,
+        _sessionKeyField: _nextSessionKey});
+      await _flush(tester);
+      final key = h.fixture.connection.connectionSnapshot.key;
+      if (success) {
+        h.api.response.complete({_sessionKeyField: _nf2StaleKey});
+      } else {
+        h.api.response.completeError(NetworkErrorException());
+      }
+      await _flush(tester);
+      expect(h.fixture.connection.connectionSnapshot.key, same(key));
+      expect(h.fixture.connection.hasAuthenticatedTransport, isTrue);
+      expect(h.fixture.chat.chatContext.sessionKey, _nextSessionKey);
+      expect(h.handler.events, [_nf2SessionRefreshed]);
+      expect(h.fixture.events.where((event) =>
+          event.kind == SocketEventKind.authenticationFailed), isEmpty);
+    });
+  }
+  for (final code in _u5TransientCodes) {
+    for (final infinite in _hookModes) {
+      testWidgets('U5 transient error keeps recovery deadline code=$code infinite=$infinite', (tester) async {
+        final h = _Nf5Harness(tester);
+        await h.login(tester);
+        final connection = h.fixture.connection;
+        final task = h.fixture.chat.chatContext.reconnectTask!;
+        if (infinite) task.config.maximumRetryCount = _u5InfiniteRetries;
+        final results = <TransportRecoveryResult>[];
+        final recovery = connection.recoverTransport(deadline: _u5Deadline)
+            .then<void>(results.add);
+        await _flush(tester);
+        final deadline = connection.getConnectionAttempt().deadline;
+        await h.packet(_loginCommand, {_errorField: true, _codeField: code});
+        await _flush(tester);
+        expect(await connection.advanceReconnect(), isTrue);
+        await _flush(tester);
+        await h.packet(_loginCommand, {_errorField: true, _codeField: code});
+        await _flush(tester);
+        expect(connection.getConnectionAttempt().deadline, deadline);
+        await tester.pump(_u5Deadline);
+        await _flush(tester);
+        await recovery;
+        expect(results, [TransportRecoveryResult.timeout]);
+        expect(h.handler.events, isEmpty);
+        expect(connection.getConnectionAttempt().authRequired, isFalse);
+        expect(h.fixture.chat.chatContext.reconnectTask, same(task));
+        expect(h.fixture.chat.chatContext.currentUserId, _userId);
+        if (infinite) {
+          expect(connection.getConnectionAttempt().retryAt, isNotNull);
+          expect(await connection.advanceReconnect(), isTrue);
+          await _flush(tester);
+          await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _nextSessionKey});
+          await _flush(tester);
+          expect(connection.hasAuthenticatedTransport, isTrue);
+        } else {
+          expect(connection.getConnectionAttempt().retryAt, isNull);
+          expect(connection.isDisconnected(), isTrue);
+          expect(h.connectionHandler.events.where((event) =>
+              event == _nf5ReconnectFailed).length, _one);
+        }
+        _nf7ExpectNotifications(h);
+      });
+    }
+  }
+}
+
+enum _U5bRefreshPath { initial, automatic, foreground, recovery }
+enum _U5bRestart { advance, recovery, foreground, network }
+
+const _u5cLoginTimeoutSeconds = 30;
+const _u5cAttemptDeadline = Duration(seconds: 20);
+
+class _U5dDispatcher extends _Dispatcher {
+  _U5dDispatcher(super.chat);
+  int logouts = _none;
+  @override
+  Future<void> onLogout() async { logouts++; }
+}
+
+void _registerU5dTests() {
+  for (final late in _hookModes) {
+    testWidgets('U5d automatic final retry preserves account REST late=$late', (tester) async {
+      final h = _Nf5Harness(tester);
+      await _nf10Prepare(h, tester, true);
+      final connection = h.fixture.connection;
+      final context = h.fixture.chat.chatContext;
+      final user = context.currentUser;
+      final owner = connection.authenticatedSessionIdentity;
+      final task = context.reconnectTask!;
+      final channel = OpenChannel(channelUrl: _retainedChannel,
+          participantCount: _none, operators: [])..set(h.fixture.chat);
+      h.fixture.chat.channelCache.insert(channelKey: _retainedChannel, data: channel);
+      final dispatcher = _U5dDispatcher(h.fixture.chat);
+      h.fixture.chat.eventDispatcher = dispatcher;
+      task.config.maximumRetryCount = _one;
+      await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+      expect(task.retryCount, _one);
+      final before = connection.getConnectionAttempt();
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      expect(h.api.requests, _one);
+      final starts = h.fixture.starts;
+      if (!late) {
+        h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+        await _flush(tester);
+        expect(h.fixture.starts, starts + _one);
+        expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+        expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+        expect(connection.getConnectionAttempt().deadline, before.deadline);
+        expect(connection.hasAuthenticatedTransport, isFalse);
+      }
+      await tester.pump(before.deadline!.difference(connection.now));
+      await _flush(tester);
+      expect(context.currentUser, same(user));
+      expect(context.currentUserId, _userId);
+      expect(connection.authenticatedSessionIdentity, same(owner));
+      expect(h.fixture.chat.channelCache.find<OpenChannel>(channelKey: _retainedChannel), same(channel));
+      expect(dispatcher.logouts, _none);
+      expect(connection.isDisconnected(), isTrue);
+      expect(connection.reconnectNotificationPending, isFalse);
+      expect(connection.getConnectionAttempt().retryAt, isNull);
+      expect(connection.getConnectionAttempt().attemptId, isNull);
+      expect(context.reconnectTask, same(task));
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+      final stoppedStarts = h.fixture.starts;
+      if (late) {
+        h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+        await _flush(tester);
+      }
+      expect(context.sessionKey, _u5RefreshedKey);
+      expect(await h.sessions.getSessionKey(), _u5RefreshedKey);
+      expect(h.handler.events, [_nf2SessionRefreshed]);
+      await tester.pump(_u5Deadline);
+      expect(h.fixture.starts, stoppedStarts);
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+      expect(await connection.advanceReconnect(), isTrue);
+      await _flush(tester);
+      expect(context.reconnectTask, isNot(same(task)));
+      expect(context.reconnectTask!.config.maximumRetryCount, _one);
+      expect(h.fixture.starts, stoppedStarts + _one);
+      expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+      await h.packet(_loginCommand, {..._loginPayload,
+        _sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      expect(connection.hasAuthenticatedTransport, isTrue);
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted,
+        _nf5ReconnectFailed, _nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+      _nf7ExpectNotifications(h);
+    });
+  }
+  for (final successBeforeClose in _hookModes) {
+    testWidgets('U5d background final REST success beforeClose=$successBeforeClose', (tester) async {
+      final h = _Nf5Harness(tester);
+      await _nf10Prepare(h, tester, true);
+      final connection = h.fixture.connection;
+      final context = h.fixture.chat.chatContext;
+      final user = context.currentUser;
+      final owner = connection.authenticatedSessionIdentity;
+      final task = context.reconnectTask!;
+      task.config.maximumRetryCount = _one;
+      await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+      expect(task.retryCount, _one);
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      final starts = h.fixture.starts;
+      final socket = h.fixture.sockets.last;
+      final close = Completer<bool>();
+      socket.closeBarrier = close;
+      h.fixture.chat.isBackground = true;
+      final paused = connection.enterBackground();
+      await _flush(tester);
+      if (!successBeforeClose) {
+        close.complete(true);
+        await paused;
+      }
+      h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      if (successBeforeClose) {
+        close.complete(true);
+        await paused;
+      }
+      expect(context.currentUser, same(user));
+      expect(connection.authenticatedSessionIdentity, same(owner));
+      expect(context.sessionKey, _u5RefreshedKey);
+      expect(context.reconnectTask, same(task));
+      expect(connection.isDisconnected(), isTrue);
+      expect(connection.reconnectNotificationPending, isFalse);
+      expect(connection.getConnectionAttempt().retryAt, isNull);
+      expect(connection.getConnectionAttempt().attemptId, isNull);
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+      expect(h.handler.events, [_nf2SessionRefreshed]);
+      await tester.pump(_u5Deadline);
+      expect(h.fixture.starts, starts);
+      h.fixture.chat.isBackground = false;
+      await connection.enterForeground();
+      await _flush(tester);
+      expect(context.reconnectTask, isNot(same(task)));
+      expect(h.fixture.starts, starts + _one);
+      expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+      await h.packet(_loginCommand, {..._loginPayload,
+        _sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      expect(connection.hasAuthenticatedTransport, isTrue);
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted,
+        _nf5ReconnectFailed, _nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+      _nf7ExpectNotifications(h);
+    });
+  }
+  testWidgets('U5e foreground before pending REST restarts at once', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    final user = context.currentUser;
+    final task = context.reconnectTask!;
+    task.config.maximumRetryCount = _one;
+    await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _one);
+    final starts = h.fixture.starts;
+    h.fixture.chat.isBackground = true;
+    await connection.enterBackground();
+    await _flush(tester);
+    h.fixture.chat.isBackground = false;
+    await connection.enterForeground();
+    await _flush(tester);
+    expect(context.reconnectTask, isNot(same(task)));
+    expect(h.fixture.starts, starts + _one);
+    expect(context.currentUser, same(user));
+    h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(context.sessionKey, _u5RefreshedKey);
+    expect(await h.sessions.getSessionKey(), _u5RefreshedKey);
+    expect(h.handler.events, [_nf2SessionRefreshed]);
+    expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    expect(context.currentUserId, _userId);
+  });
+  testWidgets('U5d automatic pending REST deadline settles with remaining budget', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    final user = context.currentUser;
+    final owner = connection.authenticatedSessionIdentity;
+    final task = context.reconnectTask!;
+    task.config.maximumRetryCount = _two;
+    await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+    expect(task.retryCount, _one);
+    final before = connection.getConnectionAttempt();
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _one);
+    expect(context.sessionKey, isNull);
+    final starts = h.fixture.starts;
+    await tester.pump(before.deadline!.difference(connection.now));
+    await _flush(tester);
+    expect(h.api.response.isCompleted, isFalse);
+    expect(context.currentUser, same(user));
+    expect(connection.authenticatedSessionIdentity, same(owner));
+    expect(connection.isDisconnected(), isTrue);
+    expect(connection.reconnectNotificationPending, isFalse);
+    expect(connection.getConnectionAttempt().retryAt, isNull);
+    expect(connection.getConnectionAttempt().attemptId, isNull);
+    expect(context.reconnectTask, same(task));
+    expect(task.retryCount, _one);
+    expect(task.exceedRetryCount, isFalse);
+    expect(h.connectionHandler.events, [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+    expect(h.handler.events, isEmpty);
+    await tester.pump(_u5Deadline);
+    expect(h.fixture.starts, starts);
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(context.reconnectTask, same(task));
+    expect(task.retryCount, _two);
+    expect(h.fixture.starts, starts + _one);
+    expect(h.fixture.sockets.last.loginSessionKey, isNull);
+    expect(connection.hasAuthenticatedTransport, isFalse);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    h.api.response.complete({_sessionKeyField: _nf2StaleKey});
+    await _flush(tester);
+    expect(context.sessionKey, _nextSessionKey);
+    expect(h.fixture.starts, starts + _one);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    expect(h.connectionHandler.events, [_nf5ReconnectStarted,
+      _nf5ReconnectFailed, _nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+    _nf7ExpectNotifications(h);
+  });
+}
+
+void _registerU5cTests() {
+  for (final late in _hookModes) {
+    testWidgets('U5c final retry REST success late=$late', (tester) async {
+      final h = _Nf5Harness(tester);
+      await _nf10Prepare(h, tester, true);
+      final connection = h.fixture.connection;
+      final context = h.fixture.chat.chatContext;
+      final user = context.currentUser;
+      final task = context.reconnectTask!;
+      task.config.maximumRetryCount = _one;
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.nonAuthorized});
+      await _flush(tester);
+      expect(await connection.advanceReconnect(), isTrue);
+      await _flush(tester);
+      final before = connection.getConnectionAttempt();
+      final starts = h.fixture.starts;
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      expect(h.api.requests, _one);
+      if (late) {
+        await tester.pump(before.deadline!.difference(connection.now));
+        await _flush(tester);
+        expect(connection.isDisconnected(), isTrue);
+        expect(connection.reconnectNotificationPending, isFalse);
+        expect(h.connectionHandler.events,
+            [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+      }
+      h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      expect(context.sessionKey, _u5RefreshedKey);
+      expect(context.currentUser, same(user));
+      expect(context.reconnectTask, same(task));
+      expect(h.handler.events, [_nf2SessionRefreshed]);
+      if (late) {
+        expect(h.fixture.starts, starts);
+        expect(connection.isDisconnected(), isTrue);
+        expect(connection.getConnectionAttempt().retryAt, isNull);
+        expect(connection.getConnectionAttempt().attemptId, isNull);
+        await tester.pump(_u5cAttemptDeadline);
+        expect(h.fixture.starts, starts);
+        expect(await connection.advanceReconnect(), isTrue);
+        await _flush(tester);
+        expect(context.reconnectTask, isNot(same(task)));
+      } else {
+        expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+        expect(connection.getConnectionAttempt().deadline, before.deadline);
+      }
+      expect(h.fixture.starts, starts + _one);
+      expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+      expect(connection.hasAuthenticatedTransport, isFalse);
+      await h.packet(_loginCommand, {..._loginPayload,
+        _sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      expect(connection.hasAuthenticatedTransport, isTrue);
+      _nf7ExpectNotifications(h);
+    });
+  }
+  testWidgets('U5c recovery deadline settles while REST is pending', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    final user = context.currentUser;
+    final task = context.reconnectTask!;
+    task.config.maximumRetryCount = _one;
+    task.increaseRetryCount();
+    expect(task.exceedRetryCount, isTrue);
+    final recovery = connection.recoverTransport(deadline: _u5Deadline);
+    await _flush(tester);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(context.sessionKey, isNull);
+    final starts = h.fixture.starts;
+    await tester.pump(_u5Deadline);
+    await _flush(tester);
+    expect(await recovery, TransportRecoveryResult.timeout);
+    expect(h.api.response.isCompleted, isFalse);
+    expect(connection.reconnectNotificationPending, isFalse);
+    expect(connection.isDisconnected(), isTrue);
+    expect(connection.getConnectionAttempt().retryAt, isNull);
+    expect(connection.getConnectionAttempt().attemptId, isNull);
+    expect(context.reconnectTask, same(task));
+    expect(context.currentUser, same(user));
+    expect(h.handler.events, isEmpty);
+    expect(h.connectionHandler.events,
+        [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+    await tester.pump(_u5Deadline);
+    expect(h.fixture.starts, starts);
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    expect(context.reconnectTask, isNot(same(task)));
+    expect(h.fixture.sockets.last.loginSessionKey, isNull);
+    expect(connection.hasAuthenticatedTransport, isFalse);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    h.api.response.complete({_sessionKeyField: _nf2StaleKey});
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    expect(context.sessionKey, _nextSessionKey);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    expect(h.handler.events, isEmpty);
+    _nf7ExpectNotifications(h);
+  });
+  for (final failBeforeClose in _hookModes) {
+    testWidgets('U5c background final retry resumes failBeforeClose=$failBeforeClose', (tester) async {
+      final h = _Nf5Harness(tester);
+      await _nf10Prepare(h, tester, true);
+      final connection = h.fixture.connection;
+      final context = h.fixture.chat.chatContext;
+      final task = context.reconnectTask!;
+      task.config.maximumRetryCount = _one;
+      await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+      expect(task.exceedRetryCount, isTrue);
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      final socket = h.fixture.sockets.last;
+      final close = Completer<bool>();
+      socket.closeBarrier = close;
+      final starts = h.fixture.starts;
+      h.fixture.chat.isBackground = true;
+      final paused = connection.enterBackground();
+      await _flush(tester);
+      if (!failBeforeClose) {
+        close.complete(true);
+        await paused;
+      }
+      h.api.response.completeError(NetworkErrorException());
+      await _flush(tester);
+      if (failBeforeClose) {
+        close.complete(true);
+        await paused;
+      }
+      expect(connection.isDisconnected(), isTrue);
+      expect(connection.reconnectNotificationPending, isFalse);
+      expect(connection.getConnectionAttempt().retryAt, isNull);
+      expect(h.connectionHandler.events,
+          [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+      expect(h.handler.events, isEmpty);
+      expect(context.currentUserId, _userId);
+      await tester.pump(_u5Deadline);
+      expect(h.fixture.starts, starts);
+      h.fixture.chat.isBackground = false;
+      await connection.enterForeground();
+      await _flush(tester);
+      expect(h.fixture.starts, starts + _one);
+      expect(context.reconnectTask, isNot(same(task)));
+      expect(h.fixture.sockets.last.loginSessionKey, isNull);
+      expect(connection.hasAuthenticatedTransport, isFalse);
+      await h.packet(_loginCommand, {..._loginPayload,
+        _sessionKeyField: _nextSessionKey});
+      await _flush(tester);
+      expect(connection.hasAuthenticatedTransport, isTrue);
+      expect(h.connectionHandler.events, [_nf5ReconnectStarted,
+        _nf5ReconnectFailed, _nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+      _nf7ExpectNotifications(h);
+    });
+  }
+  testWidgets('U5c refreshed initial login survives bounded deadline', (tester) async {
+    final h = _Nf5Harness(tester);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    context.options.connectionTimeout = _u5cLoginTimeoutSeconds;
+    context.options.reconnectAttemptDeadline = _u5cAttemptDeadline;
+    await connection.doDisconnect(clear: true, logout: true);
+    final failures = <Object>[];
+    final users = <User>[];
+    final pending = <Future<void>>[];
+    pending.add(connection.connect(_userId).then<void>(users.add,
+        onError: (Object error) { failures.add(error); }));
+    await _flush(tester);
+    final login = context.loginCompleter!;
+    pending.add(connection.connect(_userId).then<void>(users.add,
+        onError: (Object error) { failures.add(error); }));
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    final socket = h.fixture.sockets.last;
+    final starts = h.fixture.starts;
+    final before = connection.getConnectionAttempt();
+    expect(socket.loginSessionKey, _u5RefreshedKey);
+    await tester.pump(_u5cAttemptDeadline);
+    await _flush(tester);
+    expect(failures, isEmpty);
+    expect(users, isEmpty);
+    expect(login.isCompleted, isFalse);
+    expect(context.loginCompleter, same(login));
+    expect(connection.getConnectionAttempt().retryAt, isNotNull);
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    expect(h.fixture.sockets.last, isNot(same(socket)));
+    expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+    expect(connection.getConnectionAttempt().attemptId, isNot(before.attemptId));
+    expect(connection.hasAuthenticatedTransport, isFalse);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    await Future.wait(pending);
+    expect(users.map((user) => user.userId), [_userId, _userId]);
+    expect(failures, isEmpty);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    expect(h.handler.events, [_nf2SessionRefreshed]);
+    _nf7ExpectNotifications(h);
+  });
+}
+
+void _registerU5bTests() {
+  testWidgets('U5b refreshed recovery respects pending Retry-After', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final recovery = connection.recoverTransport(deadline: _u5Deadline);
+    await _flush(tester);
+    final before = connection.getConnectionAttempt();
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    await h.packet(_busyCommand, {_retryAfterField: _u5RetryAfter.inSeconds});
+    await _flush(tester);
+    final starts = h.fixture.starts;
+    h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(h.fixture.starts, starts);
+    expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+    expect(connection.getConnectionAttempt().deadline, before.deadline);
+    expect(await connection.advanceReconnect(), isFalse);
+    await tester.pump(_u5RetryAfter - _u5Tick);
+    expect(h.fixture.starts, starts);
+    await tester.pump(_u5Tick);
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(await recovery, TransportRecoveryResult.authenticated);
+    expect(h.handler.events, [_nf2SessionRefreshed]);
+    _nf7ExpectNotifications(h);
+  });
+  for (final restart in _U5bRestart.values) {
+    for (final rest in _hookModes) {
+      testWidgets('U5b exhausted budget restarts ${restart.name} REST=$rest', (tester) async {
+        final h = _Nf5Harness(tester);
+        await _nf10Prepare(h, tester, true);
+        final connection = h.fixture.connection;
+        final context = h.fixture.chat.chatContext;
+        final task = context.reconnectTask!;
+        task.config.maximumRetryCount = _one;
+        if (rest) {
+          final errors = <Object>[];
+          final refresh = h.sessions.updateSessionKey().then<void>((_) {},
+              onError: (Object error) { errors.add(error); });
+          await _flush(tester);
+          h.api.response.completeError(NetworkErrorException());
+          await _flush(tester);
+          await refresh;
+          expect(errors, [isA<SessionKeyRefreshFailedException>()]);
+        } else {
+          await h.packet(_loginCommand, {_errorField: true,
+            _codeField: SendbirdError.nonAuthorized});
+          await _flush(tester);
+        }
+        expect(await connection.advanceReconnect(), isTrue);
+        await _flush(tester);
+        h.fixture.sockets.last.error(NetworkErrorException());
+        await _flush(tester);
+        expect(connection.isDisconnected(), isTrue);
+        expect(connection.getConnectionAttempt().retryAt, isNull);
+        expect(context.reconnectTask, same(task));
+        expect(h.handler.events, isEmpty);
+        expect(h.connectionHandler.events,
+            [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+        _nf7ExpectNotifications(h);
+        final starts = h.fixture.starts;
+        await tester.pump(_u5Deadline);
+        expect(h.fixture.starts, starts);
+        Future<TransportRecoveryResult>? recovery;
+        switch (restart) {
+          case _U5bRestart.advance:
+            expect(await connection.advanceReconnect(), isTrue);
+            break;
+          case _U5bRestart.recovery:
+            recovery = connection.recoverTransport(deadline: _u5Deadline);
+            break;
+          case _U5bRestart.foreground:
+            h.fixture.chat.isBackground = true;
+            await connection.enterBackground();
+            h.fixture.chat.isBackground = false;
+            await connection.enterForeground();
+            break;
+          case _U5bRestart.network:
+            await h.fixture.chat.handleConnectivityResults([ConnectivityResult.wifi]);
+            break;
+        }
+        await _flush(tester);
+        expect(h.fixture.starts, starts + _one);
+        expect(context.reconnectTask, isNot(same(task)));
+        expect(context.reconnectTask!.config.maximumRetryCount, _one);
+        expect(h.connectionHandler.events,
+            [_nf5ReconnectStarted, _nf5ReconnectFailed, _nf5ReconnectStarted]);
+        await h.packet(_loginCommand, {..._loginPayload,
+          _sessionKeyField: _nextSessionKey});
+        await _flush(tester);
+        if (recovery != null) {
+          expect(await recovery, TransportRecoveryResult.authenticated);
+        }
+        expect(connection.hasAuthenticatedTransport, isTrue);
+        expect(context.currentUserId, _userId);
+        expect(h.handler.events, isEmpty);
+        expect(h.connectionHandler.events, [_nf5ReconnectStarted,
+          _nf5ReconnectFailed, _nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+        _nf7ExpectNotifications(h);
+      });
+    }
+  }
+  testWidgets('U5b recovery retry observes background and closes notifications', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final recovery = connection.recoverTransport(deadline: _u5Deadline);
+    await _flush(tester);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.nonAuthorized});
+    await _flush(tester);
+    final retryAt = connection.getConnectionAttempt().retryAt!;
+    final starts = h.fixture.starts;
+    h.fixture.chat.isBackground = true;
+    await tester.pump(retryAt.difference(connection.now));
+    await _flush(tester);
+    expect(await recovery, TransportRecoveryResult.cancelled);
+    expect(h.fixture.starts, starts);
+    expect(connection.isDisconnected(), isTrue);
+    expect(connection.getConnectionAttempt().retryAt, isNull);
+    expect(h.handler.events, isEmpty);
+    expect(h.connectionHandler.events,
+        [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+    _nf7ExpectNotifications(h);
+  });
+  for (final path in _U5bRefreshPath.values) {
+    for (final correlated in _hookModes) {
+      testWidgets('U5b refreshed transport ${path.name} correlated=$correlated', (tester) async {
+        final h = _Nf5Harness(tester);
+        final connection = h.fixture.connection;
+        final context = h.fixture.chat.chatContext;
+        final users = <User>[];
+        final failures = <Object>[];
+        final pending = <Future<void>>[];
+        final recoveries = <TransportRecoveryResult>[];
+        if (path == _U5bRefreshPath.initial) {
+          await connection.doDisconnect(clear: true, logout: true);
+          pending.add(connection.connect(_userId).then<void>(users.add,
+              onError: (Object error) { failures.add(error); }));
+          await _flush(tester);
+          await h.sessions.setSessionKey(_nextSessionKey);
+          pending.add(connection.connect(_userId).then<void>(users.add,
+              onError: (Object error) { failures.add(error); }));
+        } else {
+          await _nf10Prepare(h, tester, true);
+          await _nf10Start(h, tester, _Nf10Path.values.byName(path.name),
+              pending, recoveries);
+        }
+        final login = context.loginCompleter;
+        final previous = h.fixture.sockets.last;
+        final staleData = previous.data;
+        final before = connection.getConnectionAttempt();
+        final starts = h.fixture.starts;
+        expect(context.sessionKey, _nextSessionKey);
+        await h.packet(_loginCommand, {
+          if (correlated) _requestIdField: _ackRequestId,
+          _errorField: true, _codeField: SendbirdError.sessionKeyExpired,
+        });
+        await _flush(tester);
+        expect(h.api.requests, _one);
+        expect(h.handler.events, isEmpty);
+        if (login != null) expect(login.isCompleted, isFalse);
+        await tester.pump(_u5Tick);
+        h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+        await _flush(tester);
+        expect(h.fixture.starts, starts + _one);
+        expect(h.fixture.sockets.last, isNot(same(previous)));
+        expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+        expect(connection.hasAuthenticatedTransport, isFalse);
+        expect(context.loginCompleter, same(login));
+        expect(users, isEmpty);
+        expect(failures, isEmpty);
+        expect(recoveries, isEmpty);
+        if (path == _U5bRefreshPath.recovery) {
+          expect(connection.getConnectionAttempt().attemptId, before.attemptId);
+          expect(connection.getConnectionAttempt().deadline, before.deadline);
+        }
+        await staleData('$_loginCommand${jsonEncode({..._loginPayload,
+          _sessionKeyField: _nf2StaleKey})}');
+        await _flush(tester);
+        expect(connection.hasAuthenticatedTransport, isFalse);
+        expect(context.sessionKey, _u5RefreshedKey);
+        await h.packet(_loginCommand, {..._loginPayload,
+          _sessionKeyField: _u5RefreshedKey});
+        await _flush(tester);
+        await Future.wait(pending);
+        expect(connection.hasAuthenticatedTransport, isTrue);
+        expect(context.sessionKey, _u5RefreshedKey);
+        expect(failures, isEmpty);
+        if (path == _U5bRefreshPath.initial) {
+          expect(users.map((user) => user.userId), [_userId, _userId]);
+          expect(login!.isCompleted, isTrue);
+        }
+        if (path == _U5bRefreshPath.recovery) {
+          expect(recoveries, [TransportRecoveryResult.authenticated]);
+        }
+        expect(h.handler.events, [_nf2SessionRefreshed]);
+        _nf7ExpectNotifications(h);
+      });
+    }
+  }
+  for (final close in _hookModes) {
+    testWidgets('U5b refreshed initial login settles close=$close', (tester) async {
+      final h = _Nf5Harness(tester);
+      final connection = h.fixture.connection;
+      final context = h.fixture.chat.chatContext;
+      await connection.doDisconnect(clear: true, logout: true);
+      final failures = <Object>[];
+      final initial = connection.connect(_userId).then<void>((_) {},
+          onError: (Object error) { failures.add(error); });
+      final login = context.loginCompleter!;
+      await _flush(tester);
+      await h.packet(_loginCommand, {_errorField: true,
+        _codeField: SendbirdError.sessionKeyExpired});
+      await _flush(tester);
+      final starts = h.fixture.starts;
+      h.api.response.complete({_sessionKeyField: _u5RefreshedKey});
+      await _flush(tester);
+      expect(h.fixture.starts, starts + _one);
+      expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+      if (close) {
+        h.fixture.sockets.last.closed();
+      } else {
+        await tester.pump(Duration(seconds: context.options.connectionTimeout));
+      }
+      await _flush(tester);
+      await initial;
+      expect(login.isCompleted, isTrue);
+      expect(context.loginCompleter, isNull);
+      expect(failures, [close ? isA<WebSocketFailedException>()
+          : isA<ConnectionCanceledException>()]);
+      expect(failures.whereType<LoginTimeoutException>(), isEmpty);
+      expect(h.handler.events, [_nf2SessionRefreshed]);
+    });
+  }
+  testWidgets('U5e repeated 400309 keeps shared initial login', (tester) async {
+    final h = _Nf5Harness(tester);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    await connection.doDisconnect(clear: true, logout: true);
+    context.options.reconnectAttemptDeadline = _u5ShortDeadline;
+    final users = <User>[];
+    final failures = <Object>[];
+    final pending = <Future<void>>[];
+    void connect() => pending.add(connection.connect(_userId).then<void>(
+        users.add, onError: (Object error) { failures.add(error); }));
+    connect();
+    final login = context.loginCompleter!;
+    await _flush(tester);
+    connect();
+    await _flush(tester);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _one);
+    h.api.responses.first.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(h.fixture.sockets.last.loginSessionKey, _u5RefreshedKey);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _two);
+    expect(context.loginCompleter, same(login));
+    await tester.pump(_u5ShortDeadline);
+    await _flush(tester);
+    expect(login.isCompleted, isFalse);
+    expect(context.loginCompleter, same(login));
+    await connection.advanceReconnect();
+    await _flush(tester);
+    expect(context.loginCompleter, same(login));
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    await Future.wait(pending);
+    expect(login.isCompleted, isTrue);
+    expect(failures, isEmpty);
+    expect(users.map((user) => user.userId), [_userId, _userId]);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+  });
+  testWidgets('U5f active attempt is not extended by reset reconnect', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    final task = context.reconnectTask!;
+    task.config.maximumRetryCount = _one;
+    await _nf10Start(h, tester, _Nf10Path.automatic, [], []);
+    final starts = h.fixture.starts;
+    expect(task.exceedRetryCount, isTrue);
+    expect(await connection.doReconnect(reset: true), isTrue);
+    expect(await connection.doReconnect(reset: true, foregroundOnly: true), isTrue);
+    await connection.enterForeground();
+    await _flush(tester);
+    expect(context.reconnectTask, same(task));
+    expect(h.fixture.starts, starts);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+  });
+  testWidgets('U5f public reconnect does not renew an exhausted budget', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    final task = context.reconnectTask!;
+    task.config.maximumRetryCount = _one;
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.nonAuthorized});
+    await _flush(tester);
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    h.fixture.sockets.last.error(NetworkErrorException());
+    await _flush(tester);
+    expect(connection.isDisconnected(), isTrue);
+    final starts = h.fixture.starts;
+    final events = List<String>.of(h.connectionHandler.events);
+    expect(await connection.reconnect(reset: true), isFalse);
+    await _flush(tester);
+    expect(context.reconnectTask, same(task));
+    expect(h.fixture.starts, starts);
+    expect(h.connectionHandler.events, events);
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(context.reconnectTask, isNot(same(task)));
+    expect(h.fixture.starts, starts + _one);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+  });
+  testWidgets('U5f initial connect timeout with pending REST preserves and restarts', (tester) async {
+    final h = _Nf5Harness(tester);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    await connection.doDisconnect(clear: true, logout: true);
+    final users = <User>[];
+    final failures = <Object>[];
+    context.options.reconnectAttemptDeadline = _u5ShortDeadline;
+    final pending = connection.connect(_userId).then<void>(
+        users.add, onError: (Object error) { failures.add(error); });
+    await _flush(tester);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _one);
+    h.api.responses.first.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    await tester.pump(_u5ShortDeadline);
+    await _flush(tester);
+    expect(context.loginCompleter, isNotNull);
+    await tester.pump(Duration(seconds: context.options.connectionTimeout + _one));
+    await _flush(tester);
+    await pending;
+    expect(users, isEmpty);
+    expect(failures, [isA<ConnectionCanceledException>()]);
+    expect(failures.whereType<LoginTimeoutException>(), isEmpty);
+    expect(context.currentUserId, _userId);
+    final starts = h.fixture.starts;
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+  });
+  testWidgets('R7 default deadline: connectionTimeout fires before the attempt deadline', (tester) async {
+    final h = _Nf5Harness(tester);
+    final connection = h.fixture.connection;
+    final context = h.fixture.chat.chatContext;
+    await connection.doDisconnect(clear: true, logout: true);
+    final users = <User>[];
+    final failures = <Object>[];
+    final pending = connection.connect(_userId).then<void>(
+        users.add, onError: (Object error) { failures.add(error); });
+    await _flush(tester);
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    expect(h.api.requests, _one);
+    h.api.responses.first.complete({_sessionKeyField: _u5RefreshedKey});
+    await _flush(tester);
+    expect(context.loginCompleter, isNotNull);
+    await tester.pump(Duration(seconds: context.options.connectionTimeout + _one));
+    await _flush(tester);
+    await pending;
+    expect(users, isEmpty);
+    expect(failures, [isA<ConnectionCanceledException>()]);
+    expect(failures.whereType<LoginTimeoutException>(), isEmpty);
+    expect(context.currentUserId, _userId);
+    final starts = h.fixture.starts;
+    expect(await connection.advanceReconnect(), isTrue);
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    await h.packet(_loginCommand, {..._loginPayload,
+      _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+  });
+  for (final rest in _hookModes) {
+    for (final infinite in _hookModes) {
+      testWidgets('U5b transient retry budget REST=$rest infinite=$infinite', (tester) async {
+        final h = _Nf5Harness(tester);
+        await _nf10Prepare(h, tester, true);
+        final connection = h.fixture.connection;
+        final context = h.fixture.chat.chatContext;
+        final user = context.currentUser;
+        final task = context.reconnectTask!;
+        final limit = task.config.maximumRetryCount;
+        if (infinite) task.config.maximumRetryCount = _u5InfiniteRetries;
+        final starts = h.fixture.starts;
+        final errors = <Object>[];
+        if (rest) {
+          final refresh = h.sessions.updateSessionKey().then<void>((_) {},
+              onError: (Object error) { errors.add(error); });
+          await _flush(tester);
+          h.api.response.completeError(NetworkErrorException());
+          await _flush(tester);
+          await refresh;
+          expect(errors, [isA<SessionKeyRefreshFailedException>()]);
+        } else {
+          await h.packet(_loginCommand, {_errorField: true,
+            _codeField: SendbirdError.nonAuthorized});
+          await _flush(tester);
+        }
+        for (var index = _none; index < limit; index++) {
+          expect(context.reconnectTask, same(task));
+          expect(connection.getConnectionAttempt().retryAt, isNotNull);
+          expect(await connection.advanceReconnect(), isTrue);
+          await _flush(tester);
+          expect(h.fixture.starts, starts + index + _one);
+          h.fixture.sockets.last.error(NetworkErrorException());
+          await tester.pump(_statSettlingTick);
+          await _flush(tester);
+        }
+        expect(context.currentUser, same(user));
+        expect(context.currentUserId, _userId);
+        expect(context.reconnectTask, same(task));
+        expect(h.handler.events, isEmpty);
+        expect(connection.getConnectionAttempt().authRequired, isFalse);
+        if (infinite) {
+          expect(connection.getConnectionAttempt().retryAt, isNotNull);
+          expect(await connection.advanceReconnect(), isTrue);
+          await _flush(tester);
+          expect(h.fixture.starts, starts + limit + _one);
+          await h.packet(_loginCommand, {..._loginPayload,
+            _sessionKeyField: _nextSessionKey});
+          await _flush(tester);
+          expect(connection.hasAuthenticatedTransport, isTrue);
+          expect(h.connectionHandler.events,
+              [_nf5ReconnectStarted, _nf5ReconnectSucceeded]);
+        } else {
+          expect(connection.getConnectionAttempt().retryAt, isNull);
+          expect(connection.isDisconnected(), isTrue);
+          await tester.pump(_u5Deadline);
+          expect(h.fixture.starts, starts + limit);
+          expect(h.connectionHandler.events,
+              [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+        }
+        _nf7ExpectNotifications(h);
+      });
+    }
+  }
+  for (final recovery in _hookModes) {
+    for (final failBeforeClose in _hookModes) {
+      testWidgets('U5b background late REST recovery=$recovery failBeforeClose=$failBeforeClose', (tester) async {
+        final h = _Nf5Harness(tester);
+        await _nf10Prepare(h, tester, true);
+        final connection = h.fixture.connection;
+        final pending = <Future<void>>[];
+        final recoveries = <TransportRecoveryResult>[];
+        await _nf10Start(h, tester, recovery ? _Nf10Path.recovery
+            : _Nf10Path.automatic, pending, recoveries);
+        expect(h.connectionHandler.events, [_nf5ReconnectStarted]);
+        final errors = <Object>[];
+        final refresh = h.sessions.updateSessionKey().then<void>((_) {},
+            onError: (Object error) { errors.add(error); });
+        await _flush(tester);
+        final socket = h.fixture.sockets.last;
+        final close = Completer<bool>();
+        socket.closeBarrier = close;
+        final starts = h.fixture.starts;
+        h.fixture.chat.isBackground = true;
+        final paused = connection.enterBackground();
+        await _flush(tester);
+        if (!failBeforeClose) {
+          close.complete(true);
+          await paused;
+        }
+        h.api.response.completeError(NetworkErrorException());
+        await _flush(tester);
+        await refresh;
+        if (failBeforeClose) {
+          expect(h.connectionHandler.events,
+              [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+          close.complete(true);
+          await paused;
+        }
+        await Future.wait(pending);
+        if (recovery) expect(recoveries, [TransportRecoveryResult.cancelled]);
+        expect(errors, [isA<SessionKeyRefreshFailedException>()]);
+        expect(h.handler.events, isEmpty);
+        expect(h.fixture.chat.chatContext.currentUserId, _userId);
+        expect(connection.getConnectionAttempt().authRequired, isFalse);
+        expect(connection.getConnectionAttempt().retryAt, isNull);
+        expect(connection.isDisconnected(), isTrue);
+        expect(await connection.advanceReconnect(), isFalse);
+        socket.closed();
+        await tester.pump(_u5Deadline);
+        expect(h.fixture.starts, starts);
+        expect(h.connectionHandler.events,
+            [_nf5ReconnectStarted, _nf5ReconnectFailed]);
+        _nf7ExpectNotifications(h);
+      });
+    }
+  }
+}
+
+
+const _u5gOldKey = 'u5g-old-session-key';
+const _u5gNewKey = 'u5g-new-session-key';
+const _u5gAccessToken = 'u5g-access-token';
+const _u5gBackground = Duration(minutes: 10);
+const _u5gRoundTrip = Duration(milliseconds: 50);
+const _u5gReconnectToRest = Duration(milliseconds: 148);
+const _u5gTick = Duration(milliseconds: 1);
+const _u5gSettleLimit = Duration(seconds: 120);
+const _u5gRestCalls = 3;
+const _u5gSessionKeyPath = '/session_key';
+const _u5gSessionKeyHeader = 'Session-Key';
+const _u5gHttpOk = 200;
+const _u5gHttpBadRequest = 400;
+const _u5gExpiredCode = 400309;
+
+class _U5gListRequest extends ApiRequest {
+  _U5gListRequest({required super.chat}) {
+    url = 'group_channels';
+  }
+
+  @override
+  Future response(Map<String, dynamic> res) async => res;
+}
+
+class _U5gHttp {
+  final requests = <http.Request>[];
+
+  int get sessionKeyRequests =>
+      requests.where((r) => r.url.path.endsWith(_u5gSessionKeyPath)).length;
+  int get listRequests => requests.length - sessionKeyRequests;
+
+  Future<http.Response> handle(http.Request request) async {
+    requests.add(request);
+    await Future<void>.delayed(_u5gRoundTrip);
+    if (request.url.path.endsWith(_u5gSessionKeyPath)) {
+      return _json({'key': _u5gNewKey}, _u5gHttpOk);
+    }
+    return request.headers[_u5gSessionKeyHeader] == _u5gNewKey
+        ? _json({'ok': true}, _u5gHttpOk)
+        : _json({'error': true, 'code': _u5gExpiredCode, 'message': 'expired'},
+            _u5gHttpBadRequest);
+  }
+
+  static http.Response _json(Map<String, dynamic> body, int status) =>
+      http.Response(jsonEncode(body), status,
+          headers: {'content-type': 'application/json'});
+}
+
+class _U5gResult {
+  bool done = false;
+  Object? value;
+  Object? error;
+}
+
+_U5gHttp _u5gInstallHttp(_Nf5Harness h) {
+  final rest = _U5gHttp();
+  final chat = h.fixture.chat;
+  chat.chatContext.accessToken = _u5gAccessToken;
+  chat.apiClient = ApiClient(
+    chatContext: chat.chatContext,
+    sessionManager: h.sessions,
+    client: MockClient(rest.handle),
+  );
+  return rest;
+}
+
+_U5gResult _u5gSendList(_Nf5Harness h) {
+  final result = _U5gResult();
+  h.fixture.chat.apiClient.send<dynamic>(_U5gListRequest(chat: h.fixture.chat))
+      .then((value) {
+    result..done = true..value = value;
+  }, onError: (Object error) {
+    result..done = true..error = error;
+  });
+  return result;
+}
+
+Future<Duration> _u5gElapsed(WidgetTester tester, _U5gResult result) async {
+  var elapsed = Duration.zero;
+  await tester.pump();
+  while (!result.done && elapsed < _u5gSettleLimit) {
+    await tester.pump(_u5gTick);
+    elapsed += _u5gTick;
+  }
+  return elapsed;
+}
+
+void _registerU5gTests() {
+  testWidgets('U5g normal path adds no wait beyond the REST round trips', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final rest = _u5gInstallHttp(h);
+    final result = _u5gSendList(h);
+    final elapsed = await _u5gElapsed(tester, result);
+    expect(result.error, isNull);
+    expect(result.value, {'ok': true});
+    expect(rest.sessionKeyRequests, _one);
+    expect(rest.listRequests, _two);
+    expect(elapsed, _u5gRoundTrip * _u5gRestCalls);
+  });
+
+  testWidgets('U5g background, foreground reconnect, REST 400309 keeps the healthy socket', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final chat = h.fixture.chat;
+    h.sessions.setSessionKey(_u5gOldKey);
+    final rest = _u5gInstallHttp(h);
+    chat.isBackground = true;
+    await connection.enterBackground();
+    await tester.pump(_u5gBackground);
+    chat.isBackground = false;
+    final starts = h.fixture.starts;
+    await connection.enterForeground();
+    await _flush(tester);
+    expect(h.fixture.starts, starts + _one);
+    await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _u5gOldKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    await tester.pump(_u5gReconnectToRest);
+    final socket = h.fixture.sockets.last;
+    final startsAfterForeground = h.fixture.starts;
+    h.connectionHandler.events.clear();
+    h.handler.events.clear();
+
+    final result = _u5gSendList(h);
+    final elapsed = await _u5gElapsed(tester, result);
+    await tester.pump(_u5gSettleLimit);
+
+    expect(result.error, isNull);
+    expect(result.value, {'ok': true});
+    expect(elapsed, _u5gRoundTrip * _u5gRestCalls);
+    expect(rest.sessionKeyRequests, _one);
+    expect(rest.listRequests, _two);
+    expect(h.handler.events, [_nf2SessionRefreshed]);
+    expect(h.fixture.starts, startsAfterForeground);
+    expect(h.fixture.sockets.last, same(socket));
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    expect(h.connectionHandler.events, isEmpty);
+    expect(chat.chatContext.sessionKey, _u5gNewKey);
+  });
+
+  testWidgets('U5g socket rejected with 400309 is replaced after the refresh', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    final rest = _u5gInstallHttp(h);
+    final starts = h.fixture.starts;
+    await h.packet(_loginCommand, {_errorField: true,
+      _codeField: SendbirdError.sessionKeyExpired});
+    await _flush(tester);
+    await tester.pump(_u5gRoundTrip);
+    await _flush(tester);
+    expect(rest.sessionKeyRequests, _one);
+    expect(h.fixture.starts, starts + _one);
+    expect(h.fixture.sockets.last.loginSessionKey, _u5gNewKey);
+    await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _nextSessionKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    await tester.pump(_u5gSettleLimit);
+  });
+
+  testWidgets('U5g healthy socket rejected by WS 400309 is replaced after the refresh', (tester) async {
+    final h = _Nf5Harness(tester);
+    await _nf10Prepare(h, tester, true);
+    final connection = h.fixture.connection;
+    h.sessions.setSessionKey(_u5gOldKey);
+    final rest = _u5gInstallHttp(h);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    final starts = h.fixture.starts;
+    await h.packet(CommandString.error, {
+      _errorField: true, _codeField: SendbirdError.sessionKeyExpired,
+    });
+    await _flush(tester);
+    await tester.pump(_u5gRoundTrip);
+    await _flush(tester);
+    expect(rest.sessionKeyRequests, _one);
+    expect(h.fixture.starts, starts + _one);
+    expect(h.fixture.sockets.last.loginSessionKey, _u5gNewKey);
+    await h.packet(_loginCommand, {..._loginPayload, _sessionKeyField: _u5gNewKey});
+    await _flush(tester);
+    expect(connection.hasAuthenticatedTransport, isTrue);
+    final result = _u5gSendList(h);
+    await _u5gElapsed(tester, result);
+    expect(result.error, isNull);
+    expect(result.value, {'ok': true});
+    await tester.pump(_u5gSettleLimit);
+  });
 }

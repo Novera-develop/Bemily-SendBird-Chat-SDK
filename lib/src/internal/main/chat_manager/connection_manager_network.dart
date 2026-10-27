@@ -97,8 +97,19 @@ extension _NetworkConnection on ConnectionManager {
       login.future.timeout(
           Duration(seconds: chat.chatContext.options.connectionTimeout),
           onTimeout: () async {
+        final preservedLogin = identical(login, chat.chatContext.loginCompleter) &&
+            identical(login, _refreshedLogin);
         if (!identical(login, chat.chatContext.loginCompleter) ||
             !isCallbackCurrent(socket)) {
+          if (preservedLogin) {
+            _preserveRecoverySession = true;
+            _retryWithoutSessionKey = true;
+            _cancelAttempt(TransportRecoveryResult.cancelled);
+            _replaceTransport();
+            _failPendingLogin(ConnectionCanceledException());
+            changeState(DisconnectedState(chat: chat));
+            notifyReconnectFailed();
+          }
           throw ConnectionCanceledException();
         }
         final e = LoginTimeoutException();
@@ -331,7 +342,7 @@ extension _NetworkConnection on ConnectionManager {
     chat.commandManager.clearCompleterMap(
       e: WebSocketFailedException(message: e.toString()),
     );
-    if (_recovery != null) {
+    if (_recovery != null || _preserveRecoverySession) {
       _failAttempt(e);
       return;
     }
@@ -342,6 +353,7 @@ extension _NetworkConnection on ConnectionManager {
   void _failPendingLogin(Object error) {
     final login = chat.chatContext.loginCompleter;
     chat.chatContext.loginCompleter = null;
+    if (identical(login, _refreshedLogin)) _refreshedLogin = null;
     if (login != null && !login.isCompleted) login.completeError(error);
     if (isConnecting()) changeState(DisconnectedState(chat: chat));
   }
@@ -493,7 +505,8 @@ extension _ConnectionRecovery on ConnectionManager {
     } else if (!_isAttemptCurrent) {
       return;
     }
-    if (!timedOut && _recovery != null && _connectionAttempt != null) {
+    if (!timedOut && !chat.isBackground &&
+        _recovery != null && _connectionAttempt != null) {
       chat.commandManager.clearCompleterMap();
       chat.commandManager.cancelAckTimers();
       _replaceTransport();
@@ -509,13 +522,27 @@ extension _ConnectionRecovery on ConnectionManager {
     chat.commandManager.clearCompleterMap();
     chat.commandManager.cancelAckTimers();
     final login = chat.chatContext.loginCompleter;
-    chat.chatContext.loginCompleter = null;
-    if (login != null && !login.isCompleted) login.completeError(error);
+    if (timedOut && login != null && !login.isCompleted &&
+        identical(login, _refreshedLogin)) {
+      _preserveRecoverySession = true;
+    } else {
+      chat.chatContext.loginCompleter = null;
+      if (login != null && !login.isCompleted) login.completeError(error);
+      if (identical(login, _refreshedLogin)) _refreshedLogin = null;
+    }
     _replaceTransport();
     _completeRecovery(timedOut
         ? TransportRecoveryResult.timeout : TransportRecoveryResult.cancelled);
-    if (chat.isBackground || chat.chatContext.currentUserId == null || _authRequired) {
+    _retryBudgetExhausted = chat.chatContext.reconnectTask?.exceedRetryCount == true;
+    if (_retryBudgetExhausted) _preserveRecoverySession = true;
+    if (_preserveRecoverySession) {
+      _retryWithoutSessionKey = true;
+    }
+    if (_retryBudgetExhausted || chat.isBackground ||
+        chat.chatContext.currentUserId == null || _authRequired) {
+      if (_retryBudgetExhausted) _failPendingLogin(ConnectionCanceledException());
       changeState(DisconnectedState(chat: chat));
+      notifyReconnectFailed();
       return;
     }
     changeState(ReconnectingState(chat: chat));
@@ -614,10 +641,26 @@ extension _ConnectionRecovery on ConnectionManager {
     }
   }
 
-  Future<bool> _advanceReconnect() {
+  bool get _hasPendingAttempt =>
+      _sdkAttempt?.isActive == true || reconnectTimer?.isActive == true;
+
+  Future<bool> _advanceReconnect({bool restarted = false}) {
     _expireOverdueAttempt();
-    if (chat.isBackground || _authRequired || _serverDelay > Duration.zero ||
-        isConnected() || isDisconnected()) return Future.value(false);
+    if (_authRequired && !chat.isBackground) {
+      chat.sessionManager.renotifyExpiredCredentials();
+    }
+    if (chat.isBackground || _authRequired || _serverDelay > Duration.zero) {
+      return Future.value(false);
+    }
+    if (_retryBudgetExhausted || (isDisconnected() && _retryWithoutSessionKey)) {
+      if (restarted) return Future.value(true);
+      return doReconnect(reset: _retryBudgetExhausted, foregroundOnly: true,
+          restartWithoutLogin: true).then((started) {
+        if (!started) return false;
+        return _advanceReconnect(restarted: true);
+      });
+    }
+    if (isConnected() || isDisconnected()) return Future.value(false);
     if (_recoveryRetryAfterTimer?.isActive == true && _connectionAttempt != null) {
       _recoveryRetryAfterTimer?.cancel();
       _recoveryRetryAfterTimer = null;
@@ -638,10 +681,14 @@ extension _ConnectionRecovery on ConnectionManager {
   Future<TransportRecoveryResult> _recoverTransport({Duration? deadline}) {
     _expireOverdueAttempt();
     if (_recovery != null) return _recovery!.future;
-    if (_authRequired) return Future.value(TransportRecoveryResult.authRequired);
+    if (_authRequired) {
+      if (!chat.isBackground) chat.sessionManager.renotifyExpiredCredentials();
+      return Future.value(TransportRecoveryResult.authRequired);
+    }
     if (chat.isBackground || chat.chatContext.currentUserId == null) {
       return Future.value(TransportRecoveryResult.cancelled);
     }
+    _resetExhaustedRetryBudget();
     final delay = _serverDelay;
     final state = _currentState;
     if (state is DelayedConnectingState) state.retryAfterTimer?.cancel();
@@ -677,6 +724,14 @@ extension _ConnectionRecovery on ConnectionManager {
     return recovery.future;
   }
 
+  void _resetExhaustedRetryBudget({bool judgeTask = false}) {
+    final task = chat.chatContext.reconnectTask;
+    if (!_retryBudgetExhausted &&
+        !(judgeTask && task?.exceedRetryCount == true)) return;
+    if (task != null) chat.chatContext.reconnectTask = ReconnectTask(task.config);
+    _retryBudgetExhausted = false;
+  }
+
   void _waitForRecoveryRetryAfter(ConnectionAttempt attempt, {Duration? delay}) {
     final wait = delay ?? _serverDelay;
     attempt.phase = ConnectionAttemptPhase.backoff;
@@ -691,7 +746,7 @@ extension _ConnectionRecovery on ConnectionManager {
   Future<void> _startRecovery(ConnectionAttempt attempt) async {
     if (!identical(attempt, _connectionAttempt) || !attempt.active) return;
     if (chat.isBackground) {
-      _cancelAttempt(TransportRecoveryResult.cancelled);
+      _failAttempt(ConnectionCanceledException(), attempt: attempt);
       return;
     }
     _retryAt = null;
